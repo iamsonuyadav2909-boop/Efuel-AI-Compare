@@ -45,16 +45,8 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const register = useCallback(async (name, email, password, role) => {
-    try {
-      const res = await api.post('/auth/register', { name, email, password, role });
-      localStorage.setItem('efuel_token', res.data.access_token);
-      localStorage.setItem('efuel_user', JSON.stringify(res.data.user));
-      setUser(res.data.user);
-      return { success: true };
-    } catch (error) {
-      return { success: false, message: getErrorMessage(error, 'Registration failed') };
-    }
+  const register = useCallback(async () => {
+    return { success: false, message: 'Self-registration is disabled. This is a private tool with a single owner-managed credential.' };
   }, []);
 
   const logout = useCallback(() => {

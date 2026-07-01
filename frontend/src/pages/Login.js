@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -77,18 +77,8 @@ export default function Login() {
           </form>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
-            Need an account?{' '}
-            <Link to="/register" className="font-medium text-primary hover:underline" data-testid="login-register-link">
-              Create one
-            </Link>
+            Private workspace &mdash; access is limited to the EFUEL engineering team.
           </p>
-
-          <div className="mt-8 rounded-lg border bg-secondary/40 p-3 text-xs text-muted-foreground">
-            <p className="font-medium text-foreground">Demo credentials</p>
-            <p className="mt-1">admin@efuel.com / Admin@123 (Admin)</p>
-            <p>engineer@efuel.com / Engineer@123 (Engineer)</p>
-            <p>viewer@efuel.com / Viewer@123 (Viewer)</p>
-          </div>
         </motion.div>
       </div>
     </div>

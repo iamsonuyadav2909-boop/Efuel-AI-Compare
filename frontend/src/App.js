@@ -10,7 +10,6 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Loader2 } from "lucide-react";
 
 import Login from "@/pages/Login";
-import Register from "@/pages/Register";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const AISearch = lazy(() => import("@/pages/AISearch"));
@@ -52,7 +51,6 @@ function AppRoutes() {
       <Routes>
         <Route path="/" element={<RootRedirect />} />
         <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
 
         <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
           <Route path="/dashboard" element={<Dashboard />} />

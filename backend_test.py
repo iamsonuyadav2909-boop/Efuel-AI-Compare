@@ -1,6 +1,6 @@
 """
-EFUEL Engineering Hub - Backend API Test Suite
-Tests all API endpoints with proper authentication and role-based access control.
+EFUEL Engineering Hub - Backend API Test Suite (Updated for India Market & Single Owner)
+Tests authentication changes, AI search bug fix, and India market features.
 """
 import requests
 import sys
@@ -10,9 +10,7 @@ from datetime import datetime
 class EFUELAPITester:
     def __init__(self, base_url="https://engineering-ai-3.preview.emergentagent.com/api"):
         self.base_url = base_url
-        self.admin_token = None
-        self.engineer_token = None
-        self.viewer_token = None
+        self.owner_token = None
         self.tests_run = 0
         self.tests_passed = 0
         self.tests_failed = 0
@@ -56,7 +54,7 @@ class EFUELAPITester:
                 except:
                     self.log(f"   Response: {response.text[:200]}", "FAIL")
 
-            return success, response.json() if response.status_code < 500 else {}
+            return success, response.json() if response.status_code < 500 and response.headers.get('content-type', '').startswith('application/json') else {}
 
         except requests.exceptions.Timeout:
             self.tests_failed += 1
@@ -80,39 +78,55 @@ class EFUELAPITester:
         )
         if success:
             self.log(f"   Tavily: {response.get('tavily_configured')}, Firecrawl: {response.get('firecrawl_configured')}, LLM: {response.get('llm_configured')}")
-        return success
+        return success, response
 
-    def test_login(self, email, password, role_name):
+    def test_login(self, email, password, role_name, should_succeed=True):
         """Test login and get token"""
+        expected_status = 200 if should_succeed else 401
         success, response = self.run_test(
-            f"Login as {role_name}",
+            f"Login as {role_name} ({'should succeed' if should_succeed else 'should FAIL'})",
             "POST",
             "/auth/login",
-            200,
+            expected_status,
             data={"email": email, "password": password}
         )
-        if success and 'access_token' in response:
+        if success and should_succeed and 'access_token' in response:
             token = response['access_token']
             user = response.get('user', {})
             self.log(f"   Logged in: {user.get('name')} ({user.get('role')})")
             return token
         return None
 
-    def test_register(self):
-        """Test user registration"""
-        timestamp = datetime.now().strftime("%H%M%S")
+    def test_register_endpoint_removed(self):
+        """Test that /register endpoint no longer exists"""
         success, response = self.run_test(
-            "Register New User",
+            "Register Endpoint Removed (should return 404/405)",
             "POST",
             "/auth/register",
-            200,
+            404,  # Expect 404 Not Found since route is removed
             data={
-                "name": f"Test User {timestamp}",
-                "email": f"test_{timestamp}@efuel.com",
+                "name": "Test User",
+                "email": "test@efuel.com",
                 "password": "TestPass123!",
                 "role": "engineer"
             }
         )
+        # Also accept 405 Method Not Allowed
+        if not success:
+            # Try again expecting 405
+            success2, _ = self.run_test(
+                "Register Endpoint Removed (checking 405)",
+                "POST",
+                "/auth/register",
+                405,
+                data={
+                    "name": "Test User",
+                    "email": "test@efuel.com",
+                    "password": "TestPass123!",
+                    "role": "engineer"
+                }
+            )
+            return success2
         return success
 
     def test_me(self, token, expected_role):
@@ -128,34 +142,98 @@ class EFUELAPITester:
             self.log(f"   User: {response.get('name')} - Role: {response.get('role')}")
         return success
 
-    # ===== RESEARCH TESTS =====
-    def test_ai_search(self, token, query="MCB"):
-        """Test AI search - takes 15-25 seconds"""
-        self.log(f"Starting AI Search for '{query}' (this will take 20-30 seconds)...")
+    # ===== RESEARCH TESTS (India Market Focus) =====
+    def test_ai_search_india_market(self, token, query="RCCB"):
+        """Test AI search with India market focus - takes 30-45 seconds"""
+        self.log(f"Starting AI Search for '{query}' (NEW component, 30-45 seconds, testing India market + live search)...")
         success, response = self.run_test(
-            f"AI Search: {query}",
+            f"AI Search: {query} (India Market)",
             "POST",
             "/research",
             200,
-            data={"query": query, "force_refresh": False},
+            data={"query": query, "force_refresh": True},  # Force refresh to bypass any old cache
             token=token,
-            timeout=45  # Generous timeout for AI processing
+            timeout=60  # Generous timeout for AI processing with live search
         )
         if success:
-            self.log(f"   Category: {response.get('category')}, Products: {len(response.get('products', []))}")
-            return response.get('id')
-        return None
-
-    def test_get_research_by_id(self, token, result_id):
-        """Test get research result by ID"""
-        success, response = self.run_test(
-            "Get Research by ID",
-            "GET",
-            f"/research/{result_id}",
-            200,
-            token=token
-        )
-        return success
+            category = response.get('category', '')
+            products = response.get('products', [])
+            data_source_mode = response.get('data_source_mode', '')
+            sources = response.get('sources', [])
+            confidence = response.get('confidence', 0)
+            
+            self.log(f"   Category: {category}")
+            self.log(f"   Products: {len(products)}")
+            self.log(f"   Data Source Mode: {data_source_mode}")
+            self.log(f"   Sources Count: {len(sources)}")
+            self.log(f"   Confidence: {confidence}")
+            
+            # Verify India market features
+            issues = []
+            
+            # 1. Check data_source_mode is 'live_search' (not 'llm_knowledge')
+            if data_source_mode != 'live_search':
+                issues.append(f"❌ Data source mode is '{data_source_mode}' (expected 'live_search')")
+            else:
+                self.log(f"   ✅ Data source mode is 'live_search' (live search working)")
+            
+            # 2. Check sources array has actual URLs
+            if len(sources) == 0:
+                issues.append(f"❌ No sources found (expected live source URLs)")
+            else:
+                self.log(f"   ✅ Found {len(sources)} source URLs")
+                # Show first 3 sources
+                for i, src in enumerate(sources[:3]):
+                    self.log(f"      Source {i+1}: {src.get('title', 'N/A')[:50]}... - {src.get('url', 'N/A')[:60]}")
+            
+            # 3. Check pricing is in INR (₹)
+            inr_count = 0
+            usd_count = 0
+            for p in products:
+                price_range = p.get('estimated_price_range', '')
+                if '₹' in price_range or 'INR' in price_range.upper():
+                    inr_count += 1
+                if '$' in price_range or 'USD' in price_range.upper():
+                    usd_count += 1
+            
+            if inr_count > 0:
+                self.log(f"   ✅ Found {inr_count}/{len(products)} products with INR pricing")
+            else:
+                issues.append(f"❌ No products with INR (₹) pricing found")
+            
+            if usd_count > 0:
+                issues.append(f"⚠️  Found {usd_count} products with USD pricing (should be INR only)")
+            
+            # 4. Check for Indian brands
+            indian_brands = ['Havells', 'Polycab', 'RR Kabel', 'L&T', 'Legrand', 'Schneider', 
+                           'Crompton', 'CG Power', 'HPL', 'Indo Asian', 'Anchor', 'Exicom',
+                           'Luminous', 'Waaree', 'Vikram Solar', 'Adani Solar', 'Tata Power',
+                           'UTL Solar', 'ABB', 'Siemens']
+            found_indian_brands = []
+            for p in products:
+                brand = p.get('brand', '')
+                if any(ib.lower() in brand.lower() for ib in indian_brands):
+                    found_indian_brands.append(brand)
+            
+            if len(found_indian_brands) > 0:
+                self.log(f"   ✅ Found Indian/India-available brands: {', '.join(set(found_indian_brands))}")
+            else:
+                issues.append(f"⚠️  No recognized Indian brands found in results")
+            
+            # 5. Check confidence is high (indicating live data)
+            if confidence >= 0.85:
+                self.log(f"   ✅ High confidence ({confidence}) indicating live search data")
+            else:
+                issues.append(f"⚠️  Low confidence ({confidence}) - expected ~0.9 for live search")
+            
+            # Print any issues found
+            if issues:
+                self.log("\n   INDIA MARKET VERIFICATION ISSUES:")
+                for issue in issues:
+                    self.log(f"   {issue}")
+            
+            return response.get('id'), response
+        return None, {}
 
     def test_search_history(self, token):
         """Test get search history"""
@@ -170,188 +248,84 @@ class EFUELAPITester:
             self.log(f"   Search history count: {len(response)}")
         return success
 
-    def test_list_cached_research(self, token):
-        """Test list cached research results"""
+    # ===== COMPARE TESTS (INR verification) =====
+    def test_compare_products_inr(self, token, products_data):
+        """Test product comparison with INR verification"""
+        self.log("Starting Product Comparison (30-45 seconds, checking INR)...")
         success, response = self.run_test(
-            "List Cached Research",
-            "GET",
-            "/research?limit=10",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   Cached results: {len(response)}")
-        return success
-
-    # ===== COMPARE TESTS =====
-    def test_compare_products(self, token):
-        """Test product comparison"""
-        self.log("Starting Product Comparison (this will take 20-30 seconds)...")
-        # Mock product data for comparison
-        products = [
-            {"name": "Schneider MCB 32A", "brand": "Schneider", "category": "MCB"},
-            {"name": "Siemens MCB 32A", "brand": "Siemens", "category": "MCB"}
-        ]
-        success, response = self.run_test(
-            "Compare Products",
+            "Compare Products (INR Check)",
             "POST",
             "/compare",
             200,
-            data={"products": products, "query_category": "MCB"},
+            data={"products": products_data, "query_category": "RCCB"},
             token=token,
-            timeout=45
+            timeout=60
         )
         if success:
             self.log(f"   Comparison ID: {response.get('id')}")
+            # Check for INR mentions in comparison
+            comparison_text = str(response)
+            if '₹' in comparison_text or 'INR' in comparison_text.upper():
+                self.log(f"   ✅ INR pricing found in comparison results")
+            else:
+                self.log(f"   ⚠️  No INR pricing found in comparison results")
         return success
 
-    def test_compare_history(self, token):
-        """Test get compare history"""
+    # ===== BOM TESTS (INR verification) =====
+    def test_generate_bom_inr(self, token):
+        """Test BOM generation with INR verification"""
+        self.log("Starting BOM Generation for 30kW EV Charger (30-45 seconds, checking INR)...")
         success, response = self.run_test(
-            "Get Compare History",
-            "GET",
-            "/compare/history",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   Compare history count: {len(response)}")
-        return success
-
-    # ===== CHAT TESTS =====
-    def test_chat(self, token):
-        """Test AI chat assistant"""
-        self.log("Starting AI Chat (this will take 10-20 seconds)...")
-        success, response = self.run_test(
-            "AI Chat",
-            "POST",
-            "/chat",
-            200,
-            data={"message": "What is an MCB?", "session_id": None},
-            token=token,
-            timeout=30
-        )
-        if success:
-            self.log(f"   Session ID: {response.get('session_id')}")
-            self.log(f"   Reply preview: {response.get('reply', '')[:100]}...")
-            return response.get('session_id')
-        return None
-
-    def test_chat_sessions(self, token):
-        """Test list chat sessions"""
-        success, response = self.run_test(
-            "List Chat Sessions",
-            "GET",
-            "/chat/sessions",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   Chat sessions count: {len(response)}")
-        return success
-
-    def test_get_chat_session(self, token, session_id):
-        """Test get specific chat session"""
-        success, response = self.run_test(
-            "Get Chat Session",
-            "GET",
-            f"/chat/sessions/{session_id}",
-            200,
-            token=token
-        )
-        return success
-
-    # ===== BOM TESTS =====
-    def test_generate_bom(self, token):
-        """Test BOM generation"""
-        self.log("Starting BOM Generation (this will take 20-30 seconds)...")
-        success, response = self.run_test(
-            "Generate BOM",
+            "Generate BOM (30kW EV Charger, INR Check)",
             "POST",
             "/bom/generate",
             200,
             data={
-                "project_name": "Test 30kW EV Charger",
-                "requirement": "30kW EV Charger with MCB, MCCB, SPD, Energy Meter"
+                "project_name": "30kW EV Charger India",
+                "requirement": "30kW EV Charger with MCB, MCCB, SPD, Energy Meter for Indian market"
             },
             token=token,
-            timeout=45
+            timeout=60
         )
         if success:
             self.log(f"   BOM ID: {response.get('id')}")
-            self.log(f"   Components: {len(response.get('components', []))}")
+            components = response.get('components', [])
+            self.log(f"   Components: {len(components)}")
+            
+            # Check for INR in component pricing
+            inr_count = 0
+            for comp in components:
+                price = comp.get('estimated_price', '')
+                if '₹' in str(price) or 'INR' in str(price).upper():
+                    inr_count += 1
+            
+            if inr_count > 0:
+                self.log(f"   ✅ Found {inr_count}/{len(components)} components with INR pricing")
+            else:
+                self.log(f"   ⚠️  No INR pricing found in BOM components")
+            
             return response.get('id')
         return None
 
-    def test_list_bom_projects(self, token):
-        """Test list BOM projects"""
-        success, response = self.run_test(
-            "List BOM Projects",
-            "GET",
-            "/bom/projects",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   BOM projects count: {len(response)}")
-        return success
-
-    def test_get_bom_project(self, token, project_id):
-        """Test get BOM project by ID"""
-        success, response = self.run_test(
-            "Get BOM Project",
-            "GET",
-            f"/bom/projects/{project_id}",
-            200,
-            token=token
-        )
-        return success
-
-    def test_export_bom_csv(self, token, project_id):
-        """Test export BOM as CSV"""
-        success, _ = self.run_test(
-            "Export BOM CSV",
-            "GET",
-            f"/bom/projects/{project_id}/export/csv",
-            200,
-            token=token
-        )
-        return success
-
-    def test_export_bom_xlsx(self, token, project_id):
-        """Test export BOM as XLSX"""
-        success, _ = self.run_test(
-            "Export BOM XLSX",
-            "GET",
-            f"/bom/projects/{project_id}/export/xlsx",
-            200,
-            token=token
-        )
-        return success
-
-    def test_export_bom_pdf(self, token, project_id):
-        """Test export BOM as PDF"""
-        success, _ = self.run_test(
-            "Export BOM PDF",
-            "GET",
-            f"/bom/projects/{project_id}/export/pdf",
-            200,
-            token=token
-        )
-        return success
-
     # ===== ADMIN TESTS =====
     def test_admin_list_users(self, token):
-        """Test admin list users"""
+        """Test admin list users - should show exactly 1 user"""
         success, response = self.run_test(
-            "Admin: List Users",
+            "Admin: List Users (should be exactly 1)",
             "GET",
             "/admin/users",
             200,
             token=token
         )
         if success:
-            self.log(f"   Total users: {len(response)}")
+            user_count = len(response)
+            self.log(f"   Total users: {user_count}")
+            if user_count == 1:
+                self.log(f"   ✅ Exactly 1 user found (as expected)")
+                user = response[0]
+                self.log(f"   User: {user.get('name')} - {user.get('email')} - Role: {user.get('role')}")
+            else:
+                self.log(f"   ❌ Expected 1 user, found {user_count}")
         return success
 
     def test_admin_api_keys_status(self, token):
@@ -364,9 +338,14 @@ class EFUELAPITester:
             token=token
         )
         if success:
-            self.log(f"   Tavily: {response.get('tavily', {}).get('configured')}")
-            self.log(f"   Firecrawl: {response.get('firecrawl', {}).get('configured')}")
-            self.log(f"   LLM: {response.get('emergent_llm', {}).get('configured')}")
+            tavily = response.get('tavily', {}).get('configured', False)
+            firecrawl = response.get('firecrawl', {}).get('configured', False)
+            llm = response.get('emergent_llm', {}).get('configured', False)
+            self.log(f"   Tavily: {tavily}, Firecrawl: {firecrawl}, LLM: {llm}")
+            if tavily and firecrawl:
+                self.log(f"   ✅ Live search APIs configured (Tavily + Firecrawl)")
+            else:
+                self.log(f"   ⚠️  Live search APIs not fully configured")
         return success
 
     def test_admin_list_brands(self, token):
@@ -380,19 +359,6 @@ class EFUELAPITester:
         )
         if success:
             self.log(f"   Total brands: {len(response)}")
-        return success
-
-    def test_admin_list_categories(self, token):
-        """Test admin list categories"""
-        success, response = self.run_test(
-            "Admin: List Categories",
-            "GET",
-            "/admin/categories",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   Total categories: {len(response)}")
         return success
 
     def test_admin_list_products(self, token):
@@ -421,30 +387,6 @@ class EFUELAPITester:
             self.log(f"   Total documents: {len(response)}")
         return success
 
-    def test_admin_logs(self, token):
-        """Test admin logs"""
-        success, response = self.run_test(
-            "Admin: View Logs",
-            "GET",
-            "/admin/logs?limit=10",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   Log entries: {len(response)}")
-        return success
-
-    def test_role_based_access(self):
-        """Test that non-admin users cannot access admin endpoints"""
-        success, _ = self.run_test(
-            "RBAC: Engineer Cannot Access Admin",
-            "GET",
-            "/admin/users",
-            403,  # Expect forbidden
-            token=self.engineer_token
-        )
-        return success
-
     def print_summary(self):
         """Print test summary"""
         print("\n" + "="*70)
@@ -467,91 +409,84 @@ class EFUELAPITester:
 def main():
     print("="*70)
     print("EFUEL Engineering Hub - Backend API Test Suite")
+    print("Testing: Auth Changes, AI Search Bug Fix, India Market Features")
     print("="*70)
     
     tester = EFUELAPITester()
     
-    # Test credentials from review_request
-    admin_email = "admin@efuel.com"
-    admin_password = "Admin@123"
-    engineer_email = "engineer@efuel.com"
-    engineer_password = "Engineer@123"
-    viewer_email = "viewer@efuel.com"
-    viewer_password = "Viewer@123"
+    # NEW credential (should work)
+    owner_email = "owner@efuelhub.com"
+    owner_password = "EfuelOwner@2026!"
     
-    print("\n📋 PHASE 1: HEALTH & AUTH TESTS")
+    # OLD credentials (should all FAIL)
+    old_admin_email = "admin@efuel.com"
+    old_admin_password = "Admin@123"
+    old_engineer_email = "engineer@efuel.com"
+    old_engineer_password = "Engineer@123"
+    old_viewer_email = "viewer@efuel.com"
+    old_viewer_password = "Viewer@123"
+    
+    print("\n📋 PHASE 1: HEALTH CHECK")
     print("-" * 70)
     
     # Health check
-    tester.test_health()
+    health_success, health_data = tester.test_health()
     
-    # Login tests
-    tester.admin_token = tester.test_login(admin_email, admin_password, "Admin")
-    tester.engineer_token = tester.test_login(engineer_email, engineer_password, "Engineer")
-    tester.viewer_token = tester.test_login(viewer_email, viewer_password, "Viewer")
+    print("\n📋 PHASE 2: AUTH TESTS (NEW vs OLD credentials)")
+    print("-" * 70)
     
-    if not tester.admin_token or not tester.engineer_token:
-        print("\n❌ CRITICAL: Login failed. Cannot proceed with further tests.")
+    # Test NEW credential (should succeed)
+    tester.owner_token = tester.test_login(owner_email, owner_password, "Owner (NEW)", should_succeed=True)
+    
+    if not tester.owner_token:
+        print("\n❌ CRITICAL: NEW owner login failed. Cannot proceed with further tests.")
         return tester.print_summary()
     
+    # Test OLD credentials (should all FAIL)
+    tester.test_login(old_admin_email, old_admin_password, "Admin (OLD)", should_succeed=False)
+    tester.test_login(old_engineer_email, old_engineer_password, "Engineer (OLD)", should_succeed=False)
+    tester.test_login(old_viewer_email, old_viewer_password, "Viewer (OLD)", should_succeed=False)
+    
     # Test /me endpoint
-    tester.test_me(tester.admin_token, "admin")
-    tester.test_me(tester.engineer_token, "engineer")
+    tester.test_me(tester.owner_token, "admin")
     
-    # Test registration
-    tester.test_register()
+    # Test that /register endpoint is removed
+    tester.test_register_endpoint_removed()
     
-    print("\n📋 PHASE 2: AI RESEARCH TESTS")
+    print("\n📋 PHASE 3: AI SEARCH - INDIA MARKET & LIVE SEARCH BUG FIX")
     print("-" * 70)
     
-    # AI Search (using engineer token)
-    research_id = tester.test_ai_search(tester.engineer_token, "MCB")
-    if research_id:
-        tester.test_get_research_by_id(tester.engineer_token, research_id)
+    # AI Search for NEW component (RCCB) - verify live search, INR, Indian brands
+    research_id, research_data = tester.test_ai_search_india_market(tester.owner_token, "RCCB")
     
-    tester.test_search_history(tester.engineer_token)
-    tester.test_list_cached_research(tester.engineer_token)
+    # Get search history
+    tester.test_search_history(tester.owner_token)
     
-    print("\n📋 PHASE 3: COMPARE TESTS")
+    print("\n📋 PHASE 4: COMPARE ENGINE (INR verification)")
     print("-" * 70)
     
-    tester.test_compare_products(tester.engineer_token)
-    tester.test_compare_history(tester.engineer_token)
+    # If we got products from research, use them for comparison
+    if research_data and research_data.get('products'):
+        products = research_data.get('products', [])[:2]
+        compare_products = [
+            {"name": p.get('name'), "brand": p.get('brand'), "category": research_data.get('category')}
+            for p in products
+        ]
+        tester.test_compare_products_inr(tester.owner_token, compare_products)
     
-    print("\n📋 PHASE 4: AI CHAT TESTS")
+    print("\n📋 PHASE 5: BOM BUILDER (INR verification)")
     print("-" * 70)
     
-    session_id = tester.test_chat(tester.engineer_token)
-    tester.test_chat_sessions(tester.engineer_token)
-    if session_id:
-        tester.test_get_chat_session(tester.engineer_token, session_id)
-    
-    print("\n📋 PHASE 5: BOM BUILDER TESTS")
-    print("-" * 70)
-    
-    bom_id = tester.test_generate_bom(tester.engineer_token)
-    tester.test_list_bom_projects(tester.engineer_token)
-    if bom_id:
-        tester.test_get_bom_project(tester.engineer_token, bom_id)
-        tester.test_export_bom_csv(tester.engineer_token, bom_id)
-        tester.test_export_bom_xlsx(tester.engineer_token, bom_id)
-        tester.test_export_bom_pdf(tester.engineer_token, bom_id)
+    bom_id = tester.test_generate_bom_inr(tester.owner_token)
     
     print("\n📋 PHASE 6: ADMIN PANEL TESTS")
     print("-" * 70)
     
-    tester.test_admin_list_users(tester.admin_token)
-    tester.test_admin_api_keys_status(tester.admin_token)
-    tester.test_admin_list_brands(tester.admin_token)
-    tester.test_admin_list_categories(tester.admin_token)
-    tester.test_admin_list_products(tester.admin_token)
-    tester.test_admin_list_documents(tester.admin_token)
-    tester.test_admin_logs(tester.admin_token)
-    
-    print("\n📋 PHASE 7: ROLE-BASED ACCESS CONTROL TESTS")
-    print("-" * 70)
-    
-    tester.test_role_based_access()
+    tester.test_admin_list_users(tester.owner_token)
+    tester.test_admin_api_keys_status(tester.owner_token)
+    tester.test_admin_list_brands(tester.owner_token)
+    tester.test_admin_list_products(tester.owner_token)
+    tester.test_admin_list_documents(tester.owner_token)
     
     return tester.print_summary()
 

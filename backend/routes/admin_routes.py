@@ -25,6 +25,8 @@ async def list_users(current_user: dict = Depends(require_roles('admin'))):
 async def update_user_role(user_id: str, role: str, current_user: dict = Depends(require_roles('admin'))):
     if role not in ('admin', 'engineer', 'viewer'):
         raise HTTPException(status_code=400, detail='Invalid role')
+    if user_id == current_user['id']:
+        raise HTTPException(status_code=400, detail='You cannot change your own role.')
     result = await users_collection.update_one({'id': user_id}, {'$set': {'role': role}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail='User not found')
@@ -33,6 +35,8 @@ async def update_user_role(user_id: str, role: str, current_user: dict = Depends
 
 @router.put('/users/{user_id}/status')
 async def update_user_status(user_id: str, is_active: bool, current_user: dict = Depends(require_roles('admin'))):
+    if user_id == current_user['id']:
+        raise HTTPException(status_code=400, detail='You cannot disable your own account.')
     result = await users_collection.update_one({'id': user_id}, {'$set': {'is_active': is_active}})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail='User not found')

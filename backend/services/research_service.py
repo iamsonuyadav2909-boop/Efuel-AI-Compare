@@ -53,16 +53,18 @@ async def _log_stage(stage: str, query: str, success: bool, duration_ms: float, 
 
 
 SYSTEM_MESSAGE = (
-    "You are a senior electrical engineer and procurement specialist at EFUEL Engineering Hub, "
-    "specializing in EV charging infrastructure and solar power components. You have deep, "
-    "accurate knowledge of real global brands (Schneider Electric, ABB, Siemens, Eaton, Legrand, "
-    "Chint, Havells, Larsen & Toubro, Mennekes, Phoenix Contact, Huawei, Sungrow, SolarEdge, Delta "
-    "Electronics, Victron Energy, SMA, Fimer, Socomec, GE Vernova, Rittal, Weidmuller, Omron, WAGO, "
-    "Finder, Hager, Polycab, Amphenol, Tesla, Growatt, Canadian Solar, Jinko Solar, Trina Solar, "
-    "LONGi, Mean Well, etc.) and their real product lines, technical specifications, certifications "
-    "(IEC, UL, CE, BIS/ISI, RoHS), and industrial applications in EV charging and solar/electrical "
-    "protection systems. You always respond with strict, valid, parseable JSON only - no markdown "
-    "fences, no commentary, no explanations outside the JSON object."
+    "You are a senior electrical engineer and procurement specialist at EFUEL Engineering Hub in India, "
+    "specializing in EV charging infrastructure and solar power components for the Indian market. You have "
+    "deep, accurate knowledge of real brands available in India (Havells, Polycab, RR Kabel, Legrand, "
+    "Schneider Electric, L&T, Crompton, CG Power, HPL, Indo Asian, Anchor by Panasonic, Exicom, Luminous, "
+    "Waaree, Vikram Solar, Adani Solar, Tata Power Solar, UTL Solar, as well as global brands sold in India "
+    "like ABB, Siemens, Eaton, Chint, Mennekes, Phoenix Contact, Huawei, Sungrow, SolarEdge, Delta "
+    "Electronics, Victron Energy, SMA, Fimer, Socomec, Omron, WAGO, Finder, Hager, Amphenol, etc.) and their "
+    "real product lines, technical specifications, certifications (BIS/ISI, IEC, CE, UL, RoHS), and "
+    "industrial applications in EV charging and solar/electrical protection systems. Prioritize products "
+    "genuinely available for purchase in India, and always give pricing in Indian Rupees (INR, use the ₹ "
+    "symbol). You always respond with strict, valid, parseable JSON only - no markdown fences, no "
+    "commentary, no explanations outside the JSON object."
 )
 
 
@@ -100,9 +102,18 @@ def _build_prompt(query: str, tavily_data: dict, firecrawl_data: dict) -> tuple:
 
 {context_block}
 
+IMPORTANT MARKET FOCUS: This research is exclusively for the INDIAN market. Only recommend products that
+are genuinely available for purchase in India (via authorized Indian distributors, Indian manufacturer
+subsidiaries, or major Indian industrial suppliers like IndiaMART/TradeIndia-listed authorized dealers).
+Prefer Indian brands (Havells, Polycab, RR Kabel, L&T, Crompton, CG Power, HPL, Indo Asian, Anchor, Exicom,
+Luminous, Waaree, Vikram Solar, Adani Solar, Tata Power Solar, UTL Solar) where a genuinely competitive
+Indian product exists, and international brands with an established India presence (ABB India, Siemens
+India, Schneider Electric India, Legrand India, Chint, etc.) otherwise. ALL pricing MUST be given in
+Indian Rupees (₹ / INR) as the primary currency.
+
 Your task:
 1. Identify the correct normalized component category name.
-2. Identify the TOP 5 best REAL products (brand + specific model/series) currently used in 
+2. Identify the TOP 5 best REAL products (brand + specific model/series) AVAILABLE IN INDIA, currently used in 
    EV charging, solar, and industrial electrical projects for this category.
 3. For EACH of the 5 products provide ALL of these fields:
    - name (specific model/series name)
@@ -116,14 +127,14 @@ Your task:
    - engineering_notes: 1-3 sentence expert engineering note
    - compatibility: list of compatible systems/standards/voltage classes
    - industrial_applications: list of 2-4 real-world use cases
-   - alternatives: list of 2-3 alternative product/brand names
-   - certifications: list e.g. ["IEC 60947-2", "UL 489", "CE", "BIS"]
+   - alternatives: list of 2-3 alternative product/brand names (available in India)
+   - certifications: list e.g. ["BIS", "IS 8828", "IEC 60947-2", "CE"]
    - source_urls: list of URLs actually referenced from source data above (empty list if none/fallback mode)
    - ai_recommendation: 1-2 sentence recommendation
-   - estimated_price_range: approximate price range string
+   - estimated_price_range: price range in Indian Rupees, formatted like "₹1,200 - ₹1,800" (INR only, no other currency)
 4. Rank the 5 products by engineering_score, highest first (rank 1 = best).
 5. Provide "summary": 2-4 sentence overview of this component category & key buying considerations
-   for EV/solar engineering projects.
+   for EV/solar engineering projects in India.
 6. Provide "top_recommendation": name of rank-1 product + why, in one sentence.
 7. Provide "best_value": name of the most cost-effective good-quality product among the 5.
 8. Provide "confidence": float 0-1 (use ~0.9 if live source data was provided above, ~0.65 if 
@@ -150,7 +161,7 @@ Return ONLY a valid raw JSON object with EXACTLY this structure (no markdown, no
       "certifications": ["string"],
       "source_urls": ["string"],
       "ai_recommendation": "string",
-      "estimated_price_range": "string"
+      "estimated_price_range": "₹1,200 - ₹1,800"
     }}
   ],
   "top_recommendation": "string",
@@ -245,10 +256,16 @@ async def run_research(query: str, force_refresh: bool = False) -> ResearchResul
         cached = await ai_cache_collection.find_one({'query_hash': query_hash}, {'_id': 0})
         if cached:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(cached['created_at'])).total_seconds()
-            if age < CACHE_TTL_SECONDS:
+            cached_mode = cached.get('data_source_mode')
+            live_now_available = settings.tavily_enabled or settings.firecrawl_enabled
+            is_stale_fallback = cached_mode == 'llm_knowledge' and live_now_available
+            if age < CACHE_TTL_SECONDS and not is_stale_fallback:
                 logger.info(f'Cache HIT for query: {query}')
                 return ResearchResult(**cached)
-            logger.info(f'Cache STALE for query: {query} (age={age:.0f}s)')
+            if is_stale_fallback:
+                logger.info(f'Cache INVALIDATED for query: {query} (was llm_knowledge, live search now available)')
+            else:
+                logger.info(f'Cache STALE for query: {query} (age={age:.0f}s)')
 
     # 2. Tavily search (trusted sources)
     t0 = time.time()

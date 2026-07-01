@@ -11,20 +11,23 @@ from integrations.llm_client import generate_json
 logger = logging.getLogger(__name__)
 
 COMPARE_SYSTEM_MESSAGE = (
-    "You are a senior electrical engineer performing a rigorous side-by-side technical comparison "
-    "of components for EV charging and solar industrial projects. Base your analysis on the provided "
-    "product data. Always respond with strict, valid, parseable JSON only - no markdown, no commentary."
+    "You are a senior electrical engineer in India performing a rigorous side-by-side technical "
+    "comparison of components for EV charging and solar industrial projects in the Indian market. "
+    "Base your analysis on the provided product data, prioritize availability and pricing in India, "
+    "and give all pricing in Indian Rupees (₹/INR). Always respond with strict, valid, parseable "
+    "JSON only - no markdown, no commentary."
 )
 
 
 def _build_compare_prompt(products: List[dict], category: str) -> str:
     products_json = json.dumps(products, indent=2, default=str)[:9000]
-    return f"""Compare the following {len(products)} electrical/EV/solar components (category: {category or 'general'}):
+    return f"""Compare the following {len(products)} electrical/EV/solar components (category: {category or 'general'})
+for a procurement team based in India:
 
 {products_json}
 
-Provide a rigorous engineering comparison for a procurement/engineering team. Return ONLY valid JSON
-with EXACTLY this structure:
+Provide a rigorous engineering comparison. Where price is discussed, use Indian Rupees (₹/INR) only.
+Return ONLY valid JSON with EXACTLY this structure:
 {{
   "comparison_summary": "2-3 sentence overview of how these products compare",
   "spec_comparison": [

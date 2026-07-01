@@ -1,35 +1,13 @@
-"""Authentication routes: register, login, current user."""
+"""Authentication routes: single-account login only. Public self-registration is
+disabled by design - EFUEL Engineering Hub is a private internal tool with exactly
+one owner-managed credential (see backend/scripts/seed_users.py)."""
 from fastapi import APIRouter, HTTPException, Depends
-from datetime import datetime, timezone
-import uuid
 
-from models_auth import UserCreate, UserLogin, UserPublic, TokenResponse
-from auth import hash_password, verify_password, create_access_token, get_current_user
+from models_auth import UserLogin, UserPublic, TokenResponse
+from auth import verify_password, create_access_token, get_current_user
 from database import users_collection
 
 router = APIRouter(prefix='/auth', tags=['auth'])
-
-
-@router.post('/register', response_model=TokenResponse)
-async def register(payload: UserCreate):
-    existing = await users_collection.find_one({'email': payload.email.lower()})
-    if existing:
-        raise HTTPException(status_code=400, detail='An account with this email already exists.')
-    user_id = str(uuid.uuid4())
-    doc = {
-        'id': user_id,
-        'name': payload.name,
-        'email': payload.email.lower(),
-        'password_hash': hash_password(payload.password),
-        'role': payload.role,
-        'is_active': True,
-        'created_at': datetime.now(timezone.utc).isoformat(),
-    }
-    await users_collection.insert_one(doc)
-    token = create_access_token(user_id, doc['email'], doc['role'])
-    user_public = UserPublic(id=user_id, name=doc['name'], email=doc['email'], role=doc['role'],
-                              is_active=True, created_at=doc['created_at'])
-    return TokenResponse(access_token=token, user=user_public)
 
 
 @router.post('/login', response_model=TokenResponse)
