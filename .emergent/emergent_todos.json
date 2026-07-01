@@ -1,0 +1,26 @@
+[
+  {
+    "content": "Phase 1: Core AI Research Engine POC (tested, PASSED)",
+    "status": "completed"
+  },
+  {
+    "content": "Phase 2: Get design guidelines from design_agent",
+    "status": "in_progress"
+  },
+  {
+    "content": "Phase 2: Build backend - auth, research API, compare, BOM, chat, favorites, history",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: Build frontend - app shell, dashboard, AI search, compare, library, documents, BOM, assistant",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 2: End to end testing using testing agent",
+    "status": "pending"
+  },
+  {
+    "content": "Phase 3: Admin panel + production hardening",
+    "status": "pending"
+  }
+]
