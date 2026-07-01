@@ -265,6 +265,8 @@ async def _persist_products_and_docs(result: ResearchResult):
                             'brand': '',
                             'product_name': '',
                             'source': 'auto',
+                            'is_active': True,
+                            'is_deleted': False,
                             'created_at': now_iso,
                         }
                     },

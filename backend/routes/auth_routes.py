@@ -1,6 +1,6 @@
-"""Authentication routes: single-account login only. Public self-registration is
-disabled by design - EFUEL Engineering Hub is a private internal tool with exactly
-one owner-managed credential (see backend/scripts/seed_users.py)."""
+"""Authentication routes. EFUEL Engineering Hub is a multi-user enterprise app -
+public self-registration is disabled by design (accounts are provisioned by a
+Super Admin from the Admin Panel -> Users tab, see routes/admin_routes.py)."""
 from fastapi import APIRouter, HTTPException, Depends
 
 from models_auth import UserLogin, UserPublic, TokenResponse

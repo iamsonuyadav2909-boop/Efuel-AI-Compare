@@ -1,16 +1,18 @@
 """Favorites, Documents, Categories, Products, Brands, Dashboard routes."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from datetime import datetime, timezone
 import uuid
 
 from models_app import FavoriteCreate, DocumentCreate
-from auth import get_current_user, require_roles
+from auth import get_current_user, require_roles, decode_token
 from database import (
     favorites_collection, documents_collection, search_history_collection,
     compare_history_collection, ai_cache_collection, products_collection, brands_collection,
+    users_collection,
 )
 from config import settings
-from services import credential_service
+from services import credential_service, storage_service
 
 router = APIRouter(tags=['misc'])
 
@@ -52,26 +54,70 @@ async def remove_favorite(favorite_id: str, current_user: dict = Depends(get_cur
 
 @router.get('/documents')
 async def list_documents(category: str = None, doc_type: str = None, q: str = None,
+                          brand: str = None, product_id: str = None,
                           current_user: dict = Depends(get_current_user)):
-    query = {}
+    query = {'is_deleted': {'$ne': True}, 'is_active': {'$ne': False}}
     if category:
         query['category'] = {'$regex': category, '$options': 'i'}
     if doc_type:
         query['doc_type'] = doc_type
     if q:
         query['title'] = {'$regex': q, '$options': 'i'}
+    if brand:
+        query['brand'] = brand
+    if product_id:
+        query['product_id'] = product_id
     cursor = documents_collection.find(query, {'_id': 0}).sort('created_at', -1).limit(200)
-    return await cursor.to_list(200)
+    docs = await cursor.to_list(200)
+    for d in docs:
+        if d.get('source') == 'upload' and d.get('storage_path'):
+            d['url'] = f"/api/documents/{d['id']}/file"
+    return docs
 
 
 @router.post('/documents')
-async def create_document(payload: DocumentCreate, current_user: dict = Depends(require_roles('admin', 'engineer'))):
+async def create_document(payload: DocumentCreate, current_user: dict = Depends(require_roles('admin', 'super_admin', 'engineer'))):
     doc = payload.model_dump()
     doc['id'] = str(uuid.uuid4())
     doc['source'] = 'manual'
+    doc['is_active'] = True
+    doc['is_deleted'] = False
     doc['created_at'] = datetime.now(timezone.utc).isoformat()
     await documents_collection.insert_one(dict(doc))
     return doc
+
+
+@router.get('/documents/{document_id}/file')
+async def get_document_file(document_id: str, request: Request, download: bool = False, token: str = None):
+    """Streams an uploaded document's PDF bytes. Supports auth via the standard
+    `Authorization: Bearer` header (axios calls) OR a `?token=` query param
+    (needed for <a>/<iframe> tags used in Preview/Download buttons, which cannot
+    set custom headers)."""
+    auth_header = request.headers.get('authorization', '')
+    raw_token = auth_header.replace('Bearer ', '') if auth_header else token
+    if not raw_token:
+        raise HTTPException(status_code=401, detail='Authentication required')
+    payload = decode_token(raw_token)
+    user = await users_collection.find_one({'id': payload['sub']}, {'_id': 0})
+    if not user or not user.get('is_active', True):
+        raise HTTPException(status_code=401, detail='Invalid or expired session')
+
+    doc = await documents_collection.find_one({'id': document_id, 'is_deleted': {'$ne': True}}, {'_id': 0})
+    if not doc or not doc.get('storage_path'):
+        raise HTTPException(status_code=404, detail='Document file not found')
+
+    try:
+        data, content_type = await storage_service.get_object(doc['storage_path'])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'Could not retrieve file from storage: {e}')
+
+    disposition = 'attachment' if download else 'inline'
+    filename = doc.get('original_filename') or f"{doc.get('title', 'document')}.pdf"
+    return Response(
+        content=data,
+        media_type=content_type or 'application/pdf',
+        headers={'Content-Disposition': f'{disposition}; filename="{filename}"'},
+    )
 
 
 # ---- Categories (fixed enterprise taxonomy - navigation only, no mock product data) ----

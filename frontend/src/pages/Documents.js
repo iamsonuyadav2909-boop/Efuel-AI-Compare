@@ -13,6 +13,16 @@ import { FileText, FileSpreadsheet, BookOpen, Award, Link as LinkIcon, Search, E
 const TYPE_ICON = { datasheet: FileText, catalogue: FileSpreadsheet, manual: BookOpen, certificate: Award, reference: LinkIcon };
 const TYPE_LABEL = { datasheet: 'Datasheet', catalogue: 'Catalogue', manual: 'Manual', certificate: 'Certificate', reference: 'Reference' };
 
+function fileUrl(d) {
+  // For uploaded documents, url is set to /api/documents/{id}/file by backend
+  if (d.url && d.url.startsWith('/api/')) {
+    const token = localStorage.getItem('efuel_token');
+    return `${d.url}?token=${encodeURIComponent(token || '')}`;
+  }
+  // Fallback for documents without url
+  return d.url || '#';
+}
+
 export default function Documents() {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +83,7 @@ export default function Documents() {
                     <Eye className="h-3.5 w-3.5" /> Preview
                   </Button>
                   <Button variant="secondary" size="sm" asChild data-testid="document-download-button">
-                    <a href={d.url} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" /></a>
+                    <a href={fileUrl(d)} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" /></a>
                   </Button>
                 </div>
               </div>
@@ -89,12 +99,12 @@ export default function Documents() {
           <DialogHeader><DialogTitle>{previewDoc?.title}</DialogTitle></DialogHeader>
           {previewDoc && (
             <div className="h-[70vh] w-full overflow-hidden rounded-lg border bg-secondary/20">
-              <iframe src={previewDoc.url} title={previewDoc.title} className="h-full w-full" />
+              <iframe src={fileUrl(previewDoc)} title={previewDoc.title} className="h-full w-full" />
             </div>
           )}
           <p className="text-xs text-muted-foreground">
             If the preview doesn&apos;t load (some manufacturer sites block embedding),{' '}
-            <a href={previewDoc?.url} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">open it in a new tab</a>.
+            <a href={fileUrl(previewDoc) || '#'} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">open it in a new tab</a>.
           </p>
         </DialogContent>
       </Dialog>

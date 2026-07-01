@@ -1,6 +1,6 @@
 """
 JWT authentication utilities + FastAPI dependencies for EFUEL Engineering Hub.
-Roles: admin, engineer, viewer.
+Roles: super_admin, admin, engineer, procurement, viewer (see models_auth.py).
 """
 import bcrypt
 import jwt

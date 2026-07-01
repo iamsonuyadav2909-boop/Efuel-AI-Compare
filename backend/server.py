@@ -5,6 +5,7 @@ import logging
 from config import settings
 from database import init_indexes, close_db
 from services import credential_service
+from services import storage_service
 from routes.auth_routes import router as auth_router
 from routes.research_routes import router as research_router
 from routes.compare_routes import router as compare_router
@@ -67,6 +68,11 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup_event():
     await init_indexes()
+    key = await storage_service.init_storage()
+    if key:
+        logger.info('Object storage (Emergent) initialized for document uploads')
+    else:
+        logger.warning('Object storage not initialized - document upload will be unavailable until EMERGENT_LLM_KEY is valid')
     logger.info('EFUEL Engineering Hub API started successfully')
 
 

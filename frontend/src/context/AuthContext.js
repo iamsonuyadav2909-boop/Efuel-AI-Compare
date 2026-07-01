@@ -46,7 +46,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const register = useCallback(async () => {
-    return { success: false, message: 'Self-registration is disabled. This is a private tool with a single owner-managed credential.' };
+    return { success: false, message: 'Self-registration is disabled. Contact your Super Admin to create an account.' };
   }, []);
 
   const logout = useCallback(() => {

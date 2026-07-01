@@ -9,262 +9,271 @@
 - Introduce a **future-ready modular architecture**:
   - Pluggable search providers (Exa, Tavily now; Google CSE, SerpAPI future)
   - Pluggable AI providers (Emergent LLM now; OpenAI/Claude/Gemini future)
-- Build a **production-grade Admin platform** (after Phase A is verified):
+- Build a **production-grade Admin platform** (Phase B):
   - Multi-user support + RBAC: **Super Admin, Admin, Engineer, Procurement, Viewer**
   - API Integration Manager with encrypted API keys stored in MongoDB (live-update without redeploy)
-  - Search logs, AI logs, system settings
-  - Full PDF/document management with brand/product libraries and version control
+  - Search logs + AI logs, system settings
+  - Full PDF/document management with **brand/product libraries**, **versioning**, **bulk operations**, and **enable/disable**
+  - Rights to **clear Search History**
 - **No UI redesign**: maintain existing EFUEL branding and reuse existing shadcn/Tailwind components.
 
-**Current status (important correction):**
-- The app currently operates with **AI expert-knowledge fallback mode**. This is now **explicitly forbidden** and will be removed in Phase A.
+**Current status (updated):**
+- ✅ **Phase A is COMPLETE and tested** (backend + frontend).
+- ✅ Exa Search API key is configured and verified live.
+- ✅ No AI-knowledge fallback exists anywhere (strict no-data behavior enforced).
+- ▶️ Phase B (Enterprise Admin + Multi-user + PDF management) is now starting.
 
 ---
 
 ## 2) Implementation Steps
 
 ### Phase 1 — Core AI Research Engine POC (Isolation) ✅ COMPLETE (legacy)
-> Completed earlier, but parts of this phase (AI-knowledge fallback) are now **obsolete and must be removed**.
-
-**Delivered previously:** ✅
-- Tavily + Firecrawl + LLM integrations
-- Research pipeline + caching
-- UI/UX and app modules
-
-**Now deprecated:** ❌
-- Any behavior that allows LLM to answer from internal knowledge when no sources exist.
+> Completed earlier; AI-knowledge fallback is now removed and no longer exists.
 
 ---
 
 ### Phase 2 — V1 App Build Around Proven Core ✅ COMPLETE (legacy baseline)
-> The enterprise UI and application modules are complete and will be **reused**.
-
-**Delivered previously:** ✅
-- Dashboard, AI Search, Compare, BOM, Documents, Assistant, Favorites/History, Settings
-- Admin baseline screens and endpoints (limited)
-
-**Now requires Phase A refactor:**
-- Replace “AI Expert Knowledge” mode across backend + UI with **Live Verified only** semantics.
+> Enterprise UI and core modules are complete and reused.
 
 ---
 
-### Phase A (NEW P0) — Strict Live-Search Enforcement + Exa Primary (IN PROGRESS)
-> This is the immediate focus. Must be completed and tested before Phase B.
+### Phase A (P0) — Strict Live-Search Enforcement + Exa Primary ✅ COMPLETE & VERIFIED
+> Implemented and tested. This is the foundation for the enterprise platform.
 
-#### A1) Foundational Infrastructure: Credential & Integration Layer (P0)
-**Goal:** allow live key updates without redeploy/restart; enforce provider enable/disable; capture health + usage.
+#### A1) Foundational Infrastructure: Credential & Integration Layer ✅
+**Goal:** live key updates without redeploy/restart; provider enable/disable; health + usage telemetry.
 
-Backend tasks:
-1. **`config.py`**
-   - Add `EXA_API_KEY` setting (env fallback).
-   - Add `CREDENTIAL_ENCRYPTION_KEY` (required for Mongo-encrypted key storage).
-2. **`backend/.env`**
-   - Append placeholders:
-     - `EXA_API_KEY=""`
-     - `CREDENTIAL_ENCRYPTION_KEY="..."` (generated for dev; production rotated securely)
-3. **`services/credential_service.py`** (NEW)
-   - Implement encrypted API-key storage in MongoDB using Fernet:
-     - Priority order: **Mongo encrypted keys > environment variables**
-   - Provide:
-     - `get_api_key(provider)`
-     - `set_api_key(provider, key)`
-     - `set_provider_enabled(provider, enabled)`
-     - `record_success(provider, meta)` / `record_error(provider, error)`
-     - `get_integration_status()` (last success, last error, enabled, usage stats, last sync)
-   - Schema design in `system_settings` (or new `api_integrations`) collection:
-     - provider, enabled, encrypted_key, last_success_at, last_error, usage counters, last_sync_at
+Delivered:
+- ✅ `services/credential_service.py` (Fernet encryption; Mongo encrypted keys > env fallback)
+- ✅ `CREDENTIAL_ENCRYPTION_KEY` configured
+- ✅ Integration telemetry: last_success_at, last_error, usage_count
 
-#### A2) Pluggable Search Providers (P0)
-**Goal:** Exa first, Tavily second, future providers plug-in without changing research logic.
+#### A2) Pluggable Search Providers ✅
+Delivered:
+- ✅ `integrations/domain_trust.py` shared trust scoring
+- ✅ `integrations/exa_client.py` async REST client
+- ✅ Tavily/Firecrawl/LLM clients refactored to use `credential_service`
+- ✅ `services/search_orchestrator.py` (Exa → Tavily, future-ready extension point)
 
-Backend tasks:
-4. **Shared trust scoring module**
-   - Create `integrations/domain_trust.py` extracting trust logic from `tavily_client.py`.
-5. **`integrations/exa_client.py`** (NEW)
-   - Implement Exa Search API client using direct REST via `httpx` (async-friendly):
-     - If `EXA_API_KEY` missing/unavailable: return `{enabled: False, results: []}` and let orchestrator fallback.
-     - Return results in the same contract as Tavily: `{enabled, results, answer}`.
-     - Capture: url, title, domain, content/highlights where possible, trust_score.
-6. **Refactor `integrations/tavily_client.py`**
-   - Fetch key via `credential_service.get_api_key('tavily')`.
-   - Use `domain_trust.py` for scoring.
-7. **Refactor `integrations/firecrawl_client.py`**
-   - Fetch key via `credential_service.get_api_key('firecrawl')`.
-8. **Refactor `integrations/llm_client.py`**
-   - Fetch key via `credential_service.get_api_key('emergent_llm')`.
-   - (Still used only after live data exists.)
-9. **`services/search_orchestrator.py`** (NEW)
-   - Provider priority list: `[exa, tavily]`.
-   - “First-success-wins” logic:
-     - choose provider that returns usable results
-     - track `provider_used`
-   - Prepare extension points for Google CSE / SerpAPI.
+#### A3) Research Service Strict Pipeline Rewrite ✅
+Delivered:
+- ✅ `services/research_service.py` rewritten:
+  - never calls LLM without verified live data
+  - no-data returns strict exact message (and is not cached)
+  - all returned products require source_urls (grounding safeguard)
+- ✅ `models_research.py` updated: `no_data`, `message`, `search_provider_used`, `last_crawl_time`
 
-#### A3) Research Service Strict Pipeline Rewrite (P0)
-**Goal:** eliminate hallucinations; enforce strict error messaging and avoid caching false results.
+#### A4) Frontend: Live-Verified UX ✅
+Delivered:
+- ✅ Live Verified badge semantics only (no “AI Expert Knowledge” mode)
+- ✅ No-data state UI with exact message
+- ✅ Sources tab shows verification details + citations
+- ✅ Dashboard labels changed (“Not Configured” instead of “Fallback”)
 
-Backend tasks:
-10. **Rewrite `services/research_service.py`**
-   - Remove **all** `llm_knowledge` / AI-only paths.
-   - New strict flow:
-     1) Search via `search_orchestrator` (Exa→Tavily)
-     2) Crawl top URLs via Firecrawl
-     3) If **no verified live content** found (no results + no extracted pages):
-        - Return `no_data=True` and **only** the exact message string (no LLM call, no speculation).
-     4) If live content exists:
-        - Build prompt that **forces** AI to only use provided citations.
-        - Allow fewer than 5 products if evidence is limited.
-     5) If LLM fails to produce valid result or yields empty/uncited products:
-        - Return strict no-data message.
-   - Caching rules:
-     - Cache only successful live-verified results.
-     - Do **not** cache “no verified live manufacturer data” failures.
+#### A5) Testing & Verification ✅
+- ✅ Backend verification: strict gating, exact message, caching rules, regressions (compare/bom/chat/etc.)
+- ✅ Frontend verification: login, AI Search live/no-data states, Admin API keys display, no console errors
 
-11. **Update `models_research.py`**
-   Add fields needed by UI and auditing:
-   - `no_data: bool = False`
-   - `message: str = ''` (used only when `no_data=True`)
-   - `search_provider_used: str = ''` (exa|tavily)
-   - `last_crawl_time: Optional[str]`
-   - Update `data_source_mode` to always be `live_search` on success; remove/stop using `llm_knowledge` in logic.
-
-12. **Update system status endpoints to include Exa + integration manager state**
-   - `server.py` `/api/health`: include `exa_configured`/enabled and aggregated status.
-   - `routes/admin_routes.py`:
-     - extend current `/api-keys/status` to include Exa and integration manager-backed status.
-   - `routes/misc_routes.py` dashboard summary: change labels (not “fallback”), reflect “configured/enabled/healthy”.
-
-#### A4) Frontend: Live-Verified UX (No Redesign) (P0)
-**Goal:** remove AI-knowledge messaging; show live verification fields and the strict no-data message.
-
-Frontend tasks (reuse existing components):
-13. **`DataSourceBadge.js`**
-   - Replace “AI Expert Knowledge” language.
-   - Use “Live Verified Data” (shield/check icon). (If needed, show “Degraded/Not Configured” separately, but never “AI mode”.)
-14. **`AISearch.js`**
-   - If `result.no_data === true`, render a dedicated EmptyState/Alert block and display the **exact** message.
-   - Do not render ranked results panel in no-data state.
-15. **`ProductResultCard.js` (Sources tab)**
-   - Replace the old fallback text.
-   - Display live verification details:
-     - Source URLs
-     - Page title/domain where available
-     - Last crawl time
-     - Manufacturer/brand attribution if known
-16. **`Dashboard.js` + `Settings.js`**
-   - Rename statuses from “Fallback” to “Not Configured” / “Disabled” / “Degraded”, aligned to integration manager.
-
-#### A5) Testing & Verification (P0)
-Backend tests (must pass):
-- Exa key missing ⇒ Exa disabled ⇒ Tavily runs normally.
-- Exa + Tavily both unavailable ⇒ `/api/research` returns **only** strict no-data message.
-- Firecrawl unavailable or returns zero pages ⇒ treated as “no verified live manufacturer data”.
-- No AI-only responses returned anywhere.
-- Compare/BOM/Chat unaffected by refactor (regression check).
-
-Frontend tests (must pass):
-- AI Search no-data UX renders exact message.
-- Live Verified badge appears only for success.
-- Sources tab shows citations; no “AI Expert Knowledge” text remains.
-
-**Phase A Exit Criteria (Definition of Done):**
-- It is impossible for the system to return product specs/recommendations without live sources.
-- The exact no-data message is returned under all failure/no-source conditions.
-- Exa integration is implemented and ready; if key is absent it gracefully falls back to Tavily.
+**Phase A Exit Criteria:** ✅ achieved
 
 ---
 
-### Phase B (P0/P1) — Enterprise Admin + Multi-User + Document Management (NOT STARTED)
-> Begins only after Phase A is verified working.
+### Phase B (P0/P1) — Enterprise Admin + Multi-User + PDF Management (STARTING NOW)
+> Must be implemented without redesigning the UI and without breaking existing features.
+
+#### B0) Non-Negotiables (applies to all Phase B work)
+- ✅ Do **not** reintroduce AI-only fallback anywhere.
+- ✅ Do not break existing UI/flows; reuse existing shadcn components and EFUEL branding.
+- ✅ Maintain SOLID/clean architecture: modular services and routers.
+- ✅ Backwards compatibility: existing documents (auto-discovered external URLs) must still work.
 
 #### B1) Multi-User Authentication + RBAC Expansion (P0)
-- Remove “single-owner only” restriction.
-- Roles:
-  - Super Admin
-  - Admin
-  - Engineer
-  - Procurement
-  - Viewer
-- Update:
-  - `models_auth.py` roles enum
-  - Auth routes and seeding strategy (no wiping users)
-  - Route permissions (`require_roles`) across modules
+**Goal:** transition from single-owner posture to enterprise multi-user with roles.
 
-#### B2) Admin Panel: Complete Enterprise Scope (P0)
-Admin should manage:
+Backend tasks:
+1. Update roles model:
+   - `models_auth.py`: Role = Literal['super_admin','admin','engineer','procurement','viewer']
+   - Define admin gate roles: `ADMIN_ROLES = ('super_admin','admin')`
+2. Update permission checks:
+   - `auth.py`: keep `require_roles` but update usage across routes to accept `super_admin` and `admin`
+3. Auth routes:
+   - Replace “single owner only” language/behavior
+   - Add admin-managed user creation endpoints (Phase B2) instead of public registration
+4. Data migration:
+   - One-time migration: elevate current owner account to `role='super_admin'`
+
+Frontend tasks:
+5. `App.js` and `ProtectedRoute`:
+   - `/admin` route roles must allow: `["admin", "super_admin"]`
+
+**Testing:** verify login, admin access, and role gates.
+
+#### B2) Complete Admin Panel Scope (P0)
+Admin must manage:
 - Users
 - Roles
 - Brands
 - Categories
 - Products
 - Documents
-- API Integrations (Integration Manager)
+- API Integrations
 - Search Logs
 - AI Logs
 - System Settings
 
-Backend:
-- Expand `admin_routes.py` into modular routers (recommended):
-  - `admin_users_routes.py`, `admin_integrations_routes.py`, `admin_documents_routes.py`, etc.
-- Add CRUD endpoints with pagination, filtering, and audit logging.
+Backend tasks:
+1. Modularize admin routes (recommended for maintainability):
+   - `routes/admin_users_routes.py`
+   - `routes/admin_catalog_routes.py` (brands/categories/products)
+   - `routes/admin_documents_routes.py`
+   - `routes/admin_integrations_routes.py`
+   - `routes/admin_logs_routes.py` (search logs + AI logs)
+   - `routes/admin_settings_routes.py`
+2. Implement CRUD endpoints with pagination + filtering + audit logging.
+3. Add rights to clear Search History:
+   - `DELETE /api/admin/search-history` (clear all)
+   - optional: `DELETE /api/admin/search-history/{id}`
 
-Frontend:
-- Reuse existing `Admin.js` tabs and components; extend without redesign.
+Frontend tasks (no redesign, reuse components):
+4. Expand `Admin.js` with new tabs:
+   - Users, Roles, Brands, Categories, Products, Documents, API Integrations, Search Logs, AI Logs, System Settings
+5. Add dialogs/forms with existing shadcn primitives.
 
-#### B3) API Integration Manager UI + Operations (P0)
-For each integration (Exa, Tavily, Firecrawl, Emergent LLM, future APIs):
-- Enable/Disable toggle
-- Update key (stored encrypted in Mongo)
-- Test Connection button
-- Last Successful Connection
-- Last Error
-- Usage Statistics
-- Last Sync Time
-- Provider switching controls (search + AI) without code changes
+#### B3) API Integration Manager (P0)
+**Goal:** manage integrations dynamically from Admin without redeploy.
+
+Backend tasks:
+1. Persist integration state in Mongo (already supported by `credential_service`):
+   - enable/disable
+   - encrypted key
+   - last success / last error
+   - usage counters
+2. Admin endpoints:
+   - Update key (encrypted)
+   - Toggle enable/disable
+   - Test connection for each provider
+   - View usage statistics
+3. Provider selection (architecture now, UI later):
+   - Ensure search provider selection remains pluggable via `search_orchestrator.py`
+   - Keep AI provider abstraction via `LLM_PROVIDER`/`LLM_MODEL` (Admin UI will manage these in System Settings)
+
+Frontend tasks:
+4. Replace the current “API Keys” tab with “API Integrations”:
+   - Enable/disable switch
+   - Update key dialog
+   - Test Connection button
+   - Last success, last error, usage count, last sync
 
 #### B4) PDF / Document Management System (P0/P1)
-Features:
-- Upload PDF, replace, delete
+**Storage decision (confirmed):** Use **Emergent Object Storage** via `EMERGENT_LLM_KEY`.
+- No new user credentials needed.
+- Soft-delete pattern (storage has no delete API): DB is source of truth with `is_deleted`.
+
+Requirements:
+- Upload PDF
+- Replace PDF
+- Delete PDF (soft-delete)
 - Edit metadata
-- Preview + download
-- Bulk upload / bulk delete
+- Preview PDF
+- Download PDF
+- Bulk upload
+- Bulk delete
 - Version control
 - Enable/disable documents
-- Brand-specific document library
-- Product-specific document library
+- Brand-specific document libraries
+- Product-specific document libraries
 
-Backend:
-- Decide storage strategy (local/S3-compatible) and implement signed download URLs if needed.
-- Add document version schema.
+Backend tasks:
+1. `services/storage_service.py` (NEW)
+   - init_storage at startup (best-effort)
+   - put_object / get_object
+   - standardized path convention (app prefix + brand/product IDs + doc ID + version)
+2. Document schema enhancements:
+   - `documents` collection:
+     - `storage_path`, `original_filename`, `content_type`, `size`
+     - `brand_id` and/or `brand` mapping
+     - `product_id` and/or `product_name` mapping
+     - `is_active`, `is_deleted`
+     - `current_version`, `versions[]` (each version has storage_path + created_at + checksum)
+3. Admin routes:
+   - upload
+   - replace (new version)
+   - update metadata
+   - enable/disable
+   - list by brand/product
+   - preview/download endpoints that proxy storage via backend
+   - bulk operations
+4. Public/user document listing:
+   - `GET /api/documents` must filter out deleted/inactive for non-admins
 
-Frontend:
-- Extend existing Documents UI; add Admin workflows.
+Frontend tasks:
+5. Admin Documents tab:
+   - Upload dialog (single + bulk)
+   - Replace action
+   - Metadata edit dialog
+   - Preview dialog (iframe) using backend-proxied file URL
+   - Download button
+   - Enable/disable toggle
+   - Version history UI + “set current version” (if required)
+   - Bulk select + bulk delete
+6. Non-admin Document Library (`Documents.js`):
+   - Keep existing behavior for external URLs
+   - For internal uploads, use backend-proxied file endpoint (query param token if needed for iframe)
+
+#### B5) Logs: Search Logs & AI Logs (P0)
+Backend tasks:
+- Search Logs:
+  - list
+  - filter
+  - export (optional)
+  - clear (admin)
+- AI Logs:
+  - expose pipeline stage logs already in `api_logs`
+  - add filtering by stage/provider/query/user
+
+Frontend tasks:
+- Add Admin tabs for Search Logs and AI Logs with filters and “clear” actions.
+
+#### B6) System Settings (P1)
+Backend tasks:
+- Store system settings in Mongo (e.g., active providers, default model, UI defaults)
+- Provide get/update endpoints.
+
+Frontend tasks:
+- Settings tab in Admin for:
+  - LLM provider/model selection (Emergent LLM/OpenAI/Claude/Gemini)
+  - default search provider priority (Exa first)
+  - feature flags
 
 ---
 
 ## 3) Next Actions
-**Immediate (Phase A, now):**
-1. Implement credential_service + EXA integration client + search_orchestrator.
-2. Rewrite research_service to strict live-only behavior and exact error message.
-3. Update UI components to remove AI-knowledge references and support no-data state.
-4. Run backend + frontend testing agents; fix regressions.
+### Phase A (Completed)
+- ✅ Exa primary + Tavily fallback live
+- ✅ strict no-data message enforced
+- ✅ live-verified UI states confirmed
 
-**After Phase A verified:**
-5. Start Phase B: multi-user RBAC overhaul.
-6. Build Admin Integration Manager UI backed by encrypted keys in Mongo.
-7. Implement full PDF management with versioning + brand/product libraries.
+### Phase B (Immediate next)
+1. Implement RBAC expansion (5 roles) + migrate owner to `super_admin`.
+2. Expand Admin panel to full enterprise scope (tabs + backend endpoints).
+3. Implement API Integration Manager operations (toggle, update keys, test connection).
+4. Implement full PDF management using Emergent Object Storage with version control.
+5. Add admin rights to clear Search History.
+6. Run backend + frontend testing agents; fix regressions.
 
 ---
 
 ## 4) Success Criteria
-- **Phase A:**
-  - Exa primary + Tavily fallback works (Exa gracefully disabled if key missing).
-  - No AI-only output is possible.
-  - Exact no-data message returned when no verified live manufacturer data exists.
-  - UI shows Live Verified status and citations; no “AI Expert Knowledge” strings remain.
+### Phase A ✅
+- Exa primary + Tavily fallback works
+- No AI-only output is possible
+- Exact no-data message returned when no verified live manufacturer data exists
+- UI shows Live Verified status and citations; no “AI Expert Knowledge” exists
 
-- **Phase B:**
-  - Multi-user authentication with 5 roles.
-  - Admin Panel fully manages enterprise entities and logs.
-  - Integration Manager supports encrypted Mongo-stored keys, enable/disable, test connection, usage stats.
-  - Complete PDF/document management with version control and per-brand/per-product libraries.
+### Phase B (Target)
+- Multi-user authentication with roles: Super Admin, Admin, Engineer, Procurement, Viewer
+- Admin panel manages: Users, Roles, Brands, Categories, Products, Documents, API Integrations, Search Logs, AI Logs, System Settings
+- API Integration Manager supports encrypted Mongo keys + enable/disable + test connection + usage stats
+- Complete PDF/document management: upload/replace/delete/metadata/preview/download/bulk/versioning/enable-disable
+- Admin can clear Search History
+- No regressions: Search/Compare/BOM/Chat/Documents/Favorites/Library remain stable and smooth

@@ -19,6 +19,7 @@ from typing import Optional, List, Dict
 
 from config import settings
 from services import credential_service
+from services import system_settings_service
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +49,12 @@ def _extract_json(text: str) -> Optional[dict]:
 async def _get_chat(system_message: str, session_id: Optional[str] = None):
     from emergentintegrations.llm.chat import LlmChat
     api_key = await credential_service.get_api_key('emergent_llm')
+    provider, model = await system_settings_service.get_llm_provider_model()
     chat = LlmChat(
         api_key=api_key,
         session_id=session_id or str(uuid.uuid4()),
         system_message=system_message,
-    ).with_model(settings.LLM_PROVIDER, settings.LLM_MODEL)
+    ).with_model(provider, model)
     return chat
 
 
