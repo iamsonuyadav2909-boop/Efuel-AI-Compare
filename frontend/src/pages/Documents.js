@@ -14,6 +14,7 @@ const TYPE_ICON = { datasheet: FileText, catalogue: FileSpreadsheet, manual: Boo
 const TYPE_LABEL = { datasheet: 'Datasheet', catalogue: 'Catalogue', manual: 'Manual', certificate: 'Certificate', reference: 'Reference' };
 
 function fileUrl(d) {
+  if (!d) return '#';
   // For uploaded documents, url is set to /api/documents/{id}/file by backend
   if (d.url && d.url.startsWith('/api/')) {
     const token = localStorage.getItem('efuel_token');
@@ -102,10 +103,12 @@ export default function Documents() {
               <iframe src={fileUrl(previewDoc)} title={previewDoc.title} className="h-full w-full" />
             </div>
           )}
-          <p className="text-xs text-muted-foreground">
-            If the preview doesn&apos;t load (some manufacturer sites block embedding),{' '}
-            <a href={fileUrl(previewDoc) || '#'} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">open it in a new tab</a>.
-          </p>
+          {previewDoc && (
+            <p className="text-xs text-muted-foreground">
+              If the preview doesn&apos;t load (some manufacturer sites block embedding),{' '}
+              <a href={fileUrl(previewDoc)} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">open it in a new tab</a>.
+            </p>
+          )}
         </DialogContent>
       </Dialog>
     </div>
