@@ -63,7 +63,11 @@ class ResearchResult(BaseModel):
     top_recommendation: str = ''
     best_value: str = ''
     confidence: float = 0.0
-    data_source_mode: str = 'llm_knowledge'  # 'live_search' | 'llm_knowledge'
+    data_source_mode: str = 'no_data'  # 'live_search' (only successful mode) | 'no_data'
+    no_data: bool = False
+    message: str = ''  # populated ONLY when no_data=True with the exact strict error string
+    search_provider_used: str = ''  # 'exa' | 'tavily' | ''
+    last_crawl_time: Optional[str] = None
     sources: List[SourceRef] = Field(default_factory=list)
     query_hash: str = ''
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

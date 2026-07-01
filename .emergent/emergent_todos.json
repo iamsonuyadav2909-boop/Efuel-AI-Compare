@@ -1,26 +1,66 @@
 [
   {
-    "content": "Phase 1: Core AI Research Engine POC (tested, PASSED)",
+    "content": "Add EXA_API_KEY + CREDENTIAL_ENCRYPTION_KEY to backend/.env and config.py",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Design guidelines received and applied",
+    "content": "Create integrations/domain_trust.py (shared trust scoring)",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Backend built - auth, research, compare, bom, chat, favorites, documents, dashboard, admin",
+    "content": "Create services/credential_service.py (encrypted Mongo key storage + env fallback)",
     "status": "completed"
   },
   {
-    "content": "Phase 2: Frontend built - all pages",
+    "content": "Create integrations/exa_client.py (Exa Search API async client)",
     "status": "completed"
   },
   {
-    "content": "Phase 2: End to end testing using testing agent (100% backend, 98% frontend)",
+    "content": "Refactor tavily_client.py, firecrawl_client.py, llm_client.py to use credential_service",
     "status": "completed"
   },
   {
-    "content": "Phase 3: Admin panel + code splitting + README/API docs",
+    "content": "Create services/search_orchestrator.py (Exa primary, Tavily fallback, pluggable)",
     "status": "completed"
+  },
+  {
+    "content": "Rewrite services/research_service.py: remove AI-knowledge fallback, strict no-data message",
+    "status": "completed"
+  },
+  {
+    "content": "Update models_research.py with no_data/message/search_provider_used/last_crawl_time",
+    "status": "completed"
+  },
+  {
+    "content": "Update server.py /health, admin_routes.py /api-keys/status, misc_routes.py dashboard summary for Exa + credential_service",
+    "status": "completed"
+  },
+  {
+    "content": "Frontend: DataSourceBadge.js Live Verified wording",
+    "status": "completed"
+  },
+  {
+    "content": "Frontend: AISearch.js no_data state UI",
+    "status": "completed"
+  },
+  {
+    "content": "Frontend: ProductResultCard.js Sources tab Live Verified details",
+    "status": "completed"
+  },
+  {
+    "content": "Frontend: Dashboard.js status label tweak",
+    "status": "completed"
+  },
+  {
+    "content": "Lint backend + frontend, restart services, smoke test",
+    "status": "completed"
+  },
+  {
+    "content": "Call testing_agent_v3 for backend+frontend regression + new flow validation",
+    "status": "in_progress"
+  },
+  {
+    "content": "Fix any bugs from testing agent report",
+    "status": "pending"
   }
 ]

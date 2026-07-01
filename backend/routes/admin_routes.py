@@ -10,6 +10,7 @@ from database import (
     documents_collection, api_logs_collection,
 )
 from config import settings
+from services import credential_service
 
 router = APIRouter(prefix='/admin', tags=['admin'])
 
@@ -118,12 +119,15 @@ async def admin_logs(stage: str = None, limit: int = 100, current_user: dict = D
 # ---- API Key / Integration status ----
 @router.get('/api-keys/status')
 async def api_keys_status(current_user: dict = Depends(require_roles('admin'))):
+    status = await credential_service.get_all_status()
     return {
-        'tavily': {'configured': settings.tavily_enabled, 'env_var': 'TAVILY_API_KEY',
-                   'description': 'Trusted web search for manufacturer sources'},
-        'firecrawl': {'configured': settings.firecrawl_enabled, 'env_var': 'FIRECRAWL_API_KEY',
+        'exa': {**status['exa'], 'env_var': 'EXA_API_KEY',
+                'description': 'PRIMARY semantic search for manufacturer datasheets, specs & pricing'},
+        'tavily': {**status['tavily'], 'env_var': 'TAVILY_API_KEY',
+                   'description': 'Fallback web search for manufacturer sources (used if Exa unavailable)'},
+        'firecrawl': {**status['firecrawl'], 'env_var': 'FIRECRAWL_API_KEY',
                       'description': 'Extracts specs/datasheets from manufacturer pages'},
-        'emergent_llm': {'configured': settings.llm_enabled, 'env_var': 'EMERGENT_LLM_KEY',
+        'emergent_llm': {**status['emergent_llm'], 'env_var': 'EMERGENT_LLM_KEY',
                          'provider': settings.LLM_PROVIDER, 'model': settings.LLM_MODEL,
-                         'description': 'AI analysis, ranking, chat assistant, BOM & compare engine'},
+                         'description': 'Structures & scores verified live data - chat assistant, compare & BOM engine'},
     }

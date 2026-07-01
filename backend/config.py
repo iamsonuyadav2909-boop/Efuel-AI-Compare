@@ -21,11 +21,17 @@ class Settings:
     LLM_PROVIDER: str = os.environ.get('LLM_PROVIDER', 'openai')
     LLM_MODEL: str = os.environ.get('LLM_MODEL', 'gpt-4o')
 
-    # Tavily (placeholder until user provides)
+    # Tavily (fallback search provider)
     TAVILY_API_KEY: str = os.environ.get('TAVILY_API_KEY', '')
+
+    # Exa (PRIMARY search provider - semantic search). Optional until user configures.
+    EXA_API_KEY: str = os.environ.get('EXA_API_KEY', '')
 
     # Firecrawl (placeholder until user provides)
     FIRECRAWL_API_KEY: str = os.environ.get('FIRECRAWL_API_KEY', '')
+
+    # Encryption key for Admin-configured API credentials stored in MongoDB
+    CREDENTIAL_ENCRYPTION_KEY: str = os.environ.get('CREDENTIAL_ENCRYPTION_KEY', '')
 
     # Auth
     JWT_SECRET: str = os.environ.get('JWT_SECRET', 'change-me')
@@ -35,6 +41,10 @@ class Settings:
     @property
     def tavily_enabled(self) -> bool:
         return bool(self.TAVILY_API_KEY and self.TAVILY_API_KEY.strip())
+
+    @property
+    def exa_enabled(self) -> bool:
+        return bool(self.EXA_API_KEY and self.EXA_API_KEY.strip())
 
     @property
     def firecrawl_enabled(self) -> bool:

@@ -4,6 +4,7 @@ import logging
 
 from config import settings
 from database import init_indexes, close_db
+from services import credential_service
 from routes.auth_routes import router as auth_router
 from routes.research_routes import router as research_router
 from routes.compare_routes import router as compare_router
@@ -33,11 +34,13 @@ async def root():
 
 @api_router.get("/health")
 async def health():
+    status = await credential_service.get_all_status()
     return {
         "status": "healthy",
-        "tavily_configured": settings.tavily_enabled,
-        "firecrawl_configured": settings.firecrawl_enabled,
-        "llm_configured": settings.llm_enabled,
+        "exa_configured": status['exa']['configured'],
+        "tavily_configured": status['tavily']['configured'],
+        "firecrawl_configured": status['firecrawl']['configured'],
+        "llm_configured": status['emergent_llm']['configured'],
     }
 
 

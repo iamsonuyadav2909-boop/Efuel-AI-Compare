@@ -1,15 +1,16 @@
 """
 Core AI Research Engine - the heart of EFUEL Engineering Hub.
 
-Workflow: User searches component -> Tavily searches trusted sources (if configured)
--> Firecrawl extracts specs from top manufacturer pages (if configured)
--> LLM analyzes (always, using live data when available, else expert engineering
-   knowledge) -> generates structured engineering summary + Top 5 ranked products
-   with Engineering Score -> cached in MongoDB -> returned to caller.
+STRICT LIVE-SEARCH-ONLY WORKFLOW (non-negotiable):
 
-Designed to gracefully degrade: works fully even without TAVILY_API_KEY /
-FIRECRAWL_API_KEY, and automatically upgrades to live-search mode the moment
-those keys are configured - no code changes required.
+    Search (Exa -> Tavily fallback) -> Crawl (Firecrawl) -> Extract -> AI Analysis -> Recommendation
+
+The AI is NEVER permitted to answer from its own internal knowledge. If no verified
+live manufacturer data can be found by the search/crawl pipeline, the engine returns
+the exact message defined in `NO_DATA_MESSAGE` below and performs NO LLM call at all.
+When live data IS found, the LLM is instructed to ground every product strictly in
+the provided source data - it may return fewer than 5 products, but must never invent
+brands, models or specs that are not evidenced in the sources.
 """
 import hashlib
 import logging
@@ -18,16 +19,22 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from config import settings
 from database import ai_cache_collection, api_logs_collection, products_collection, brands_collection
 from models_research import ResearchResult, ProductResult, ScoreBreakdown, SourceRef
-from integrations.tavily_client import search_trusted_sources
+from services.search_orchestrator import run_search
 from integrations.firecrawl_client import extract_pages
 from integrations.llm_client import generate_json
 
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SECONDS = 24 * 60 * 60  # 24 hours
+
+# Exact, non-negotiable message returned whenever no verified live manufacturer data
+# can be found. Never alter this wording - it is a strict user requirement.
+NO_DATA_MESSAGE = (
+    "No verified live manufacturer data was found for this product. Please check your "
+    "search query or configure Exa/Tavily and Firecrawl API keys."
+)
 
 
 def normalize_query(query: str) -> str:
@@ -54,91 +61,79 @@ async def _log_stage(stage: str, query: str, success: bool, duration_ms: float, 
 
 SYSTEM_MESSAGE = (
     "You are a senior electrical engineer and procurement specialist at EFUEL Engineering Hub in India, "
-    "specializing in EV charging infrastructure and solar power components for the Indian market. You have "
-    "deep, accurate knowledge of real brands available in India (Havells, Polycab, RR Kabel, Legrand, "
-    "Schneider Electric, L&T, Crompton, CG Power, HPL, Indo Asian, Anchor by Panasonic, Exicom, Luminous, "
-    "Waaree, Vikram Solar, Adani Solar, Tata Power Solar, UTL Solar, as well as global brands sold in India "
-    "like ABB, Siemens, Eaton, Chint, Mennekes, Phoenix Contact, Huawei, Sungrow, SolarEdge, Delta "
-    "Electronics, Victron Energy, SMA, Fimer, Socomec, Omron, WAGO, Finder, Hager, Amphenol, etc.) and their "
-    "real product lines, technical specifications, certifications (BIS/ISI, IEC, CE, UL, RoHS), and "
-    "industrial applications in EV charging and solar/electrical protection systems. Prioritize products "
-    "genuinely available for purchase in India, and always give pricing in Indian Rupees (INR, use the ₹ "
-    "symbol). You always respond with strict, valid, parseable JSON only - no markdown fences, no "
-    "commentary, no explanations outside the JSON object."
+    "specializing in EV charging infrastructure and solar power components for the Indian market. You are "
+    "given REAL, live-crawled source data gathered moments ago from manufacturer/distributor websites and "
+    "search engines. Your ONLY job is to extract, organize, structure and score the products that are "
+    "ACTUALLY PRESENT in that source data - you must NEVER supplement it with your own background "
+    "knowledge, invent products, or guess specifications that are not evidenced in the provided text. "
+    "You always respond with strict, valid, parseable JSON only - no markdown fences, no commentary, no "
+    "explanations outside the JSON object."
 )
 
 
-def _build_prompt(query: str, tavily_data: dict, firecrawl_data: dict) -> tuple:
-    """Returns (prompt_text, data_source_mode)"""
-    live_context_parts = []
-    if tavily_data.get('answer'):
-        live_context_parts.append(f"Search summary: {tavily_data['answer']}")
-    for r in tavily_data.get('results', [])[:6]:
-        if r.get('content'):
-            live_context_parts.append(f"[Source: {r.get('url')}]\n{r.get('content')[:800]}")
-    for p in firecrawl_data.get('pages', []):
-        if p.get('markdown'):
-            live_context_parts.append(f"[Extracted from: {p.get('url')}]\n{p.get('markdown')[:2000]}")
+def _build_prompt(query: str, live_context_parts: list) -> str:
+    """Build the strict, source-grounded prompt. Only ever called when live_context_parts
+    is non-empty (i.e. verified live data exists)."""
+    context_block = (
+        "Here is REAL, live data gathered moments ago from search engines and manufacturer/distributor "
+        "websites for this exact query:\n--- SOURCE DATA START ---\n" +
+        "\n\n".join(live_context_parts)[:11000] +
+        "\n--- SOURCE DATA END ---"
+    )
 
-    has_live_data = len(live_context_parts) > 0
-    data_source_mode = 'live_search' if has_live_data else 'llm_knowledge'
-
-    if has_live_data:
-        context_block = (
-            "Here is real-time data gathered from official manufacturer sources and trusted "
-            "engineering websites:\n--- SOURCE DATA START ---\n" + "\n\n".join(live_context_parts)[:9000] +
-            "\n--- SOURCE DATA END ---\nUse this real data as your primary reference, filling minor "
-            "gaps with your accurate expert engineering knowledge of these real products."
-        )
-    else:
-        context_block = (
-            "No live web search data is currently available for this request (live search/crawl "
-            "integrations are not yet configured by the administrator). Use your accurate expert "
-            "engineering knowledge of REAL, currently-manufactured products from major brands. "
-            "Do not invent fictional brands or models - only reference real, verifiable products."
-        )
-
-    prompt = f"""Research the following electrical/EV-charging/solar component category: "{query}"
+    prompt = f"""Analyze the following live source data to research this electrical/EV-charging/solar
+component category: "{query}"
 
 {context_block}
 
-IMPORTANT MARKET FOCUS: This research is exclusively for the INDIAN market. Only recommend products that
-are genuinely available for purchase in India (via authorized Indian distributors, Indian manufacturer
-subsidiaries, or major Indian industrial suppliers like IndiaMART/TradeIndia-listed authorized dealers).
-Prefer Indian brands (Havells, Polycab, RR Kabel, L&T, Crompton, CG Power, HPL, Indo Asian, Anchor, Exicom,
-Luminous, Waaree, Vikram Solar, Adani Solar, Tata Power Solar, UTL Solar) where a genuinely competitive
-Indian product exists, and international brands with an established India presence (ABB India, Siemens
-India, Schneider Electric India, Legrand India, Chint, etc.) otherwise. ALL pricing MUST be given in
-Indian Rupees (₹ / INR) as the primary currency.
+CRITICAL GROUNDING RULES (must be followed exactly):
+1. You may ONLY report products, brands, models and specifications that are explicitly mentioned or
+   strongly evidenced by the SOURCE DATA above. Do NOT invent, assume, or add products/specs from your
+   own general knowledge - this is a strict compliance requirement, not a stylistic preference.
+2. If the source data only clearly evidences 1, 2 or 3 distinct real products, return ONLY that many
+   products - never pad the list with fabricated products to reach 5. A shorter, accurate list is
+   required over a longer, invented one.
+3. Every product's "source_urls" field MUST contain only URLs that were actually part of the source data
+   above and that specifically relate to that product.
+4. For any specification, price, or certification not explicitly present in the source data, you may
+   state a value ONLY if it is a widely-published, verifiable spec of that exact real product from
+   your training knowledge AND it does not contradict the source data. If truly unknown, use
+   "Not specified in sources" rather than guessing.
+5. If, after reviewing the source data, you cannot identify ANY real, specific product (brand + model),
+   return an empty "products" array - do not force an answer.
+
+IMPORTANT MARKET FOCUS: This research is exclusively for the INDIAN market. Prefer products genuinely
+available for purchase in India. ALL pricing MUST be given in Indian Rupees (₹ / INR) as the primary
+currency, and ONLY if pricing is evidenced in or reasonably inferable from the source data - otherwise
+state "Not specified in sources".
 
 Your task:
 1. Identify the correct normalized component category name.
-2. Identify the TOP 5 best REAL products (brand + specific model/series) AVAILABLE IN INDIA, currently used in 
-   EV charging, solar, and industrial electrical projects for this category.
-3. For EACH of the 5 products provide ALL of these fields:
+2. Identify up to 5 REAL products (brand + specific model/series) that are evidenced in the source data,
+   ranked by engineering merit. Return fewer than 5 if the data does not support more.
+3. For EACH product provide ALL of these fields:
    - name (specific model/series name)
    - brand (manufacturer name)
-   - specifications: at least 5 realistic technical specs as {{"name":..,"value":..,"unit":..}}
+   - specifications: technical specs evidenced in the source data, as {{"name":..,"value":..,"unit":..}}
    - score_breakdown: technical_quality, reliability, brand_reputation, industrial_usage, warranty,
      certification, performance, availability, compatibility -- each a number 0-10
    - engineering_score: overall weighted score 0-100 (based on score_breakdown)
-   - pros: list of 3-5 strings
-   - cons: list of 2-4 strings
-   - engineering_notes: 1-3 sentence expert engineering note
+   - pros: list of 2-5 strings
+   - cons: list of 1-4 strings
+   - engineering_notes: 1-3 sentence expert engineering note grounded in the source data
    - compatibility: list of compatible systems/standards/voltage classes
    - industrial_applications: list of 2-4 real-world use cases
-   - alternatives: list of 2-3 alternative product/brand names (available in India)
-   - certifications: list e.g. ["BIS", "IS 8828", "IEC 60947-2", "CE"]
-   - source_urls: list of URLs actually referenced from source data above (empty list if none/fallback mode)
-   - ai_recommendation: 1-2 sentence recommendation
-   - estimated_price_range: price range in Indian Rupees, formatted like "₹1,200 - ₹1,800" (INR only, no other currency)
-4. Rank the 5 products by engineering_score, highest first (rank 1 = best).
-5. Provide "summary": 2-4 sentence overview of this component category & key buying considerations
-   for EV/solar engineering projects in India.
-6. Provide "top_recommendation": name of rank-1 product + why, in one sentence.
-7. Provide "best_value": name of the most cost-effective good-quality product among the 5.
-8. Provide "confidence": float 0-1 (use ~0.9 if live source data was provided above, ~0.65 if 
-   relying on expert knowledge only).
+   - alternatives: list of 0-3 alternative product/brand names (ONLY if evidenced in the source data)
+   - certifications: list e.g. ["BIS", "IS 8828", "IEC 60947-2", "CE"] (only if evidenced)
+   - source_urls: list of URLs from the source data above that specifically relate to this product
+     (MUST NOT be empty for any product you include - if you cannot cite a source, do not include the product)
+   - ai_recommendation: 1-2 sentence recommendation grounded in the source data
+   - estimated_price_range: price range in Indian Rupees like "₹1,200 - ₹1,800", or "Not specified in sources"
+4. Rank the products by engineering_score, highest first (rank 1 = best).
+5. Provide "summary": 2-4 sentence overview of this component category grounded in the source data.
+6. Provide "top_recommendation": name of rank-1 product + why, in one sentence (empty string if no products).
+7. Provide "best_value": name of the most cost-effective good-quality product (empty string if no products).
+8. Provide "confidence": float 0-1 reflecting how well the source data supports these findings.
 
 Return ONLY a valid raw JSON object with EXACTLY this structure (no markdown, no extra text):
 {{
@@ -168,7 +163,40 @@ Return ONLY a valid raw JSON object with EXACTLY this structure (no markdown, no
   "best_value": "string",
   "confidence": 0.9
 }}"""
-    return prompt, data_source_mode
+    return prompt
+
+
+def _collect_live_context(search_data: dict, firecrawl_data: dict) -> list:
+    """Gathers all verified live text snippets from the search + crawl stages."""
+    live_context_parts = []
+    if search_data.get('answer'):
+        live_context_parts.append(f"Search summary: {search_data['answer']}")
+    for r in search_data.get('results', [])[:6]:
+        if r.get('content'):
+            live_context_parts.append(f"[Source: {r.get('url')}]\n{r.get('content')[:800]}")
+    for p in firecrawl_data.get('pages', []):
+        if p.get('markdown'):
+            live_context_parts.append(f"[Extracted from: {p.get('url')}]\n{p.get('markdown')[:2000]}")
+    return live_context_parts
+
+
+def _no_data_result(query: str, query_hash: str, search_provider_used: str = '') -> ResearchResult:
+    return ResearchResult(
+        query=query,
+        category=query,
+        summary='',
+        products=[],
+        top_recommendation='',
+        best_value='',
+        confidence=0.0,
+        data_source_mode='no_data',
+        no_data=True,
+        message=NO_DATA_MESSAGE,
+        search_provider_used=search_provider_used,
+        last_crawl_time=None,
+        sources=[],
+        query_hash=query_hash,
+    )
 
 
 async def _persist_products_and_docs(result: ResearchResult):
@@ -247,53 +275,68 @@ async def _persist_products_and_docs(result: ResearchResult):
 
 
 async def run_research(query: str, force_refresh: bool = False) -> ResearchResult:
-    """Main entrypoint for the AI Research Engine core workflow."""
+    """Main entrypoint for the AI Research Engine's strict live-search-only workflow."""
     query = query.strip()
     query_hash = compute_query_hash(query)
 
-    # 1. Cache lookup
+    # 1. Cache lookup - ONLY ever return previously successful, live-verified results.
     if not force_refresh:
-        cached = await ai_cache_collection.find_one({'query_hash': query_hash}, {'_id': 0})
+        cached = await ai_cache_collection.find_one(
+            {'query_hash': query_hash, 'data_source_mode': 'live_search', 'no_data': {'$ne': True}},
+            {'_id': 0},
+        )
         if cached:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(cached['created_at'])).total_seconds()
-            cached_mode = cached.get('data_source_mode')
-            live_now_available = settings.tavily_enabled or settings.firecrawl_enabled
-            is_stale_fallback = cached_mode == 'llm_knowledge' and live_now_available
-            if age < CACHE_TTL_SECONDS and not is_stale_fallback:
+            if age < CACHE_TTL_SECONDS:
                 logger.info(f'Cache HIT for query: {query}')
                 return ResearchResult(**cached)
-            if is_stale_fallback:
-                logger.info(f'Cache INVALIDATED for query: {query} (was llm_knowledge, live search now available)')
-            else:
-                logger.info(f'Cache STALE for query: {query} (age={age:.0f}s)')
+            logger.info(f'Cache STALE for query: {query} (age={age:.0f}s)')
 
-    # 2. Tavily search (trusted sources)
+    # 2. Search (Exa primary -> Tavily fallback)
     t0 = time.time()
-    tavily_data = await search_trusted_sources(query)
-    await _log_stage('tavily_search', query, tavily_data.get('enabled', False) and len(tavily_data.get('results', [])) > 0,
-                      (time.time() - t0) * 1000, {'enabled': tavily_data.get('enabled'), 'result_count': len(tavily_data.get('results', []))})
+    search_data = await run_search(query)
+    provider_used = search_data.get('provider_used') or ''
+    await _log_stage('search', query, bool(search_data.get('results')), (time.time() - t0) * 1000, {
+        'provider_used': provider_used,
+        'result_count': len(search_data.get('results', [])),
+    })
 
-    # 3. Firecrawl extraction (top trusted URLs)
+    # 3. Firecrawl extraction (top trusted URLs from search results)
     t0 = time.time()
-    top_urls = [r['url'] for r in tavily_data.get('results', [])[:3] if r.get('url')]
-    firecrawl_data = await extract_pages(top_urls) if top_urls else {'enabled': settings.firecrawl_enabled, 'pages': []}
+    top_urls = [r['url'] for r in search_data.get('results', [])[:3] if r.get('url')]
+    firecrawl_data = await extract_pages(top_urls) if top_urls else {'enabled': False, 'pages': []}
     await _log_stage('firecrawl_extract', query, len(firecrawl_data.get('pages', [])) > 0,
                       (time.time() - t0) * 1000, {'enabled': firecrawl_data.get('enabled'), 'pages_scraped': len(firecrawl_data.get('pages', []))})
 
-    # 4. LLM Analysis
+    live_context_parts = _collect_live_context(search_data, firecrawl_data)
+
+    # 4. STRICT GATE: no verified live data anywhere -> return the exact no-data message.
+    # NEVER call the LLM in this branch and NEVER cache this outcome (so a retry after
+    # configuring API keys, or a transient network blip, works immediately).
+    if not live_context_parts:
+        logger.warning(f'No verified live manufacturer data found for query: "{query}" (provider={provider_used or "none"})')
+        await _log_stage('no_data_gate', query, False, 0, {'provider_used': provider_used})
+        return _no_data_result(query, query_hash, provider_used)
+
+    # 5. LLM Analysis - strictly grounded in the live source data collected above.
     t0 = time.time()
-    prompt, data_source_mode = _build_prompt(query, tavily_data, firecrawl_data)
+    prompt = _build_prompt(query, live_context_parts)
     parsed = await generate_json(SYSTEM_MESSAGE, prompt)
-    llm_success = parsed is not None
-    await _log_stage('llm_analyze', query, llm_success, (time.time() - t0) * 1000, {'data_source_mode': data_source_mode})
+    llm_success = parsed is not None and bool(parsed.get('products'))
+    await _log_stage('llm_analyze', query, llm_success, (time.time() - t0) * 1000, {'provider_used': provider_used})
 
-    if not parsed:
-        raise RuntimeError('LLM analysis failed to produce a valid structured result. Please try again.')
+    if not parsed or not parsed.get('products'):
+        logger.warning(f'LLM could not extract any grounded products from live data for query: "{query}"')
+        return _no_data_result(query, query_hash, provider_used)
 
-    # 5. Build structured ResearchResult
+    # 6. Build structured ResearchResult
     products = []
     for p in parsed.get('products', [])[:5]:
         try:
+            # Grounding safeguard: skip any product the model failed to cite a source for.
+            if not p.get('source_urls'):
+                logger.warning(f'Dropping ungrounded product "{p.get("name")}" (no source_urls cited)')
+                continue
             breakdown_raw = p.get('score_breakdown', {}) or {}
             breakdown = ScoreBreakdown(**{k: float(v) for k, v in breakdown_raw.items() if k in ScoreBreakdown.model_fields})
             eng_score = p.get('engineering_score')
@@ -322,9 +365,15 @@ async def run_research(query: str, force_refresh: bool = False) -> ResearchResul
             logger.error(f'Error parsing product entry: {e} | raw={p}')
             continue
 
+    # If every candidate product was dropped by the grounding safeguard, treat as no-data.
+    if not products:
+        logger.warning(f'All candidate products were ungrounded/dropped for query: "{query}"')
+        return _no_data_result(query, query_hash, provider_used)
+
     products.sort(key=lambda x: x.rank)
 
-    sources = [SourceRef(title=r.get('title', ''), url=r.get('url', ''), domain=r.get('domain', ''), trust_score=r.get('trust_score', 0)) for r in tavily_data.get('results', [])]
+    sources = [SourceRef(title=r.get('title', ''), url=r.get('url', ''), domain=r.get('domain', ''), trust_score=r.get('trust_score', 0)) for r in search_data.get('results', [])]
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     result = ResearchResult(
         query=query,
@@ -334,15 +383,19 @@ async def run_research(query: str, force_refresh: bool = False) -> ResearchResul
         top_recommendation=parsed.get('top_recommendation', ''),
         best_value=parsed.get('best_value', ''),
         confidence=float(parsed.get('confidence', 0.6)),
-        data_source_mode=data_source_mode,
+        data_source_mode='live_search',
+        no_data=False,
+        message='',
+        search_provider_used=provider_used,
+        last_crawl_time=now_iso,
         sources=sources,
         query_hash=query_hash,
     )
 
-    # 6. Cache in MongoDB (upsert)
+    # 7. Cache in MongoDB (upsert) - only successful, live-verified results are ever cached.
     doc = result.model_dump()
     doc['created_at'] = result.created_at.isoformat()
-    doc['updated_at'] = datetime.now(timezone.utc).isoformat()
+    doc['updated_at'] = now_iso
     await ai_cache_collection.update_one(
         {'query_hash': query_hash},
         {'$set': doc},

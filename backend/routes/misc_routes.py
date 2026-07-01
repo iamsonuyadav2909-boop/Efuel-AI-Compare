@@ -10,6 +10,7 @@ from database import (
     compare_history_collection, ai_cache_collection, products_collection, brands_collection,
 )
 from config import settings
+from services import credential_service
 
 router = APIRouter(tags=['misc'])
 
@@ -138,6 +139,8 @@ async def dashboard_summary(current_user: dict = Depends(get_current_user)):
         {}, {'_id': 0, 'id': 1, 'query': 1, 'category': 1, 'summary': 1, 'created_at': 1, 'confidence': 1}
     ).sort('created_at', -1).limit(5).to_list(5)
 
+    integration_status = await credential_service.get_all_status()
+
     return {
         'recent_searches': recent_searches,
         'recent_compares': recent_compares,
@@ -147,9 +150,10 @@ async def dashboard_summary(current_user: dict = Depends(get_current_user)):
         'top_recommended_products': top_products,
         'latest_analyses': latest_analyses,
         'api_status': {
-            'tavily_search': settings.tavily_enabled,
-            'firecrawl_extract': settings.firecrawl_enabled,
-            'ai_analysis': settings.llm_enabled,
+            'exa_search': integration_status['exa']['configured'],
+            'tavily_search': integration_status['tavily']['configured'],
+            'firecrawl_extract': integration_status['firecrawl']['configured'],
+            'ai_analysis': integration_status['emergent_llm']['configured'],
         },
         'system_status': 'operational',
     }

@@ -1,15 +1,24 @@
 """
 LLM integration via Emergent Universal LLM Key (emergentintegrations library).
 Used for structured engineering analysis (JSON) + conversational AI assistant.
-Modular: swap provider/model via env vars (LLM_PROVIDER / LLM_MODEL) or later switch
-to a direct OpenAI key without changing call sites.
+
+IMPORTANT: This LLM is ONLY ever called with verified live source data already
+gathered by the search/crawl pipeline (see services/research_service.py). It must
+NEVER be used to answer purely from internal model knowledge for product research.
+
+Future-ready / pluggable AI provider point: `settings.LLM_PROVIDER` /
+`settings.LLM_MODEL` already select the underlying model (openai/anthropic/google)
+via the Emergent key. Phase B will expose provider/model switching from the Admin
+Panel without touching call sites in research_service.py, compare_service.py, etc.
 """
 import json
 import logging
 import re
 import uuid
 from typing import Optional, List, Dict
+
 from config import settings
+from services import credential_service
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +47,9 @@ def _extract_json(text: str) -> Optional[dict]:
 
 async def _get_chat(system_message: str, session_id: Optional[str] = None):
     from emergentintegrations.llm.chat import LlmChat
+    api_key = await credential_service.get_api_key('emergent_llm')
     chat = LlmChat(
-        api_key=settings.EMERGENT_LLM_KEY,
+        api_key=api_key,
         session_id=session_id or str(uuid.uuid4()),
         system_message=system_message,
     ).with_model(settings.LLM_PROVIDER, settings.LLM_MODEL)
@@ -48,7 +58,8 @@ async def _get_chat(system_message: str, session_id: Optional[str] = None):
 
 async def generate_json(system_message: str, user_prompt: str, max_retries: int = 2) -> Optional[dict]:
     """Send a prompt to the LLM and parse a strict JSON response, retrying on parse failure."""
-    if not settings.llm_enabled:
+    api_key = await credential_service.get_api_key('emergent_llm')
+    if not api_key:
         logger.error('LLM disabled: EMERGENT_LLM_KEY not configured')
         return None
 
@@ -67,6 +78,7 @@ async def generate_json(system_message: str, user_prompt: str, max_retries: int 
             response_text = await chat.send_message(UserMessage(text=prompt))
             parsed = _extract_json(response_text)
             if parsed is not None:
+                await credential_service.record_success('emergent_llm')
                 return parsed
             last_error = 'Could not parse JSON from LLM response'
             logger.warning(f'LLM JSON parse failed on attempt {attempt + 1}')
@@ -75,12 +87,14 @@ async def generate_json(system_message: str, user_prompt: str, max_retries: int 
             logger.error(f'LLM call error on attempt {attempt + 1}: {e}')
 
     logger.error(f'LLM generate_json failed after {max_retries + 1} attempts: {last_error}')
+    await credential_service.record_error('emergent_llm', last_error or 'unknown error')
     return None
 
 
 async def generate_chat_reply(system_message: str, session_id: str, message: str) -> str:
     """Conversational reply for the AI Assistant - plain text (markdown allowed)."""
-    if not settings.llm_enabled:
+    api_key = await credential_service.get_api_key('emergent_llm')
+    if not api_key:
         return (
             "AI Assistant is currently unavailable because EMERGENT_LLM_KEY is not configured. "
             "Please contact your administrator."
@@ -89,7 +103,9 @@ async def generate_chat_reply(system_message: str, session_id: str, message: str
         from emergentintegrations.llm.chat import UserMessage
         chat = await _get_chat(system_message, session_id=session_id)
         response_text = await chat.send_message(UserMessage(text=message))
+        await credential_service.record_success('emergent_llm')
         return response_text
     except Exception as e:
         logger.error(f'LLM chat error: {e}')
+        await credential_service.record_error('emergent_llm', str(e))
         return "I'm sorry, I encountered an error while processing your request. Please try again shortly."

@@ -150,7 +150,7 @@ export default function Dashboard() {
                   {ok ? (
                     <Badge className="gap-1 bg-success/10 text-success hover:bg-success/10"><CheckCircle2 className="h-3 w-3" /> Live</Badge>
                   ) : (
-                    <Badge variant="outline" className="gap-1 border-warning/30 text-warning"><AlertTriangle className="h-3 w-3" /> Fallback</Badge>
+                    <Badge variant="outline" className="gap-1 border-warning/30 text-warning"><AlertTriangle className="h-3 w-3" /> Not Configured</Badge>
                   )}
                 </div>
               ))}

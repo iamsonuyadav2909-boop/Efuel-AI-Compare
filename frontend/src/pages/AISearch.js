@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { addToBasket, removeFromBasket, isInBasket, getBasket } from '@/lib/compareBasket';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { Sparkles, Search, Loader2, GitCompareArrows } from 'lucide-react';
+import { Sparkles, Search, Loader2, GitCompareArrows, ShieldAlert, KeyRound } from 'lucide-react';
 
 const EXAMPLE_CHIPS = [
   'MCB', 'MCCB', 'SPD', 'Contactor', 'Relay', 'Energy Meter', 'Solar Inverter',
@@ -173,13 +173,13 @@ export default function AISearch() {
           </motion.div>
         )}
 
-        {!loading && result && (
+        {!loading && result && !result.no_data && (
           <motion.div key="results" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="mt-8">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-secondary/30 p-4">
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="font-display text-lg font-semibold">{result.category}</h2>
-                  <DataSourceBadge mode={result.data_source_mode} confidence={result.confidence} />
+                  <DataSourceBadge mode={result.data_source_mode} confidence={result.confidence} provider={result.search_provider_used} />
                 </div>
                 <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{result.summary}</p>
               </div>
@@ -208,7 +208,31 @@ export default function AISearch() {
                   compareFull={basketCount >= 4}
                   onFavorite={() => handleFavoriteToggle(selectedProduct)}
                   onAddCompare={() => handleCompareToggle(selectedProduct)}
+                  resultSources={result.sources}
+                  lastCrawlTime={result.last_crawl_time}
                 />
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {!loading && result && result.no_data && (
+          <motion.div key="no-data" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="mt-8">
+            <div className="mx-auto max-w-xl rounded-xl border border-warning/30 bg-warning/5 p-8 text-center" data-testid="no-live-data-state">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-warning/10 text-warning">
+                <ShieldAlert className="h-6 w-6" />
+              </div>
+              <h3 className="font-display text-base font-semibold">No Verified Live Data Found</h3>
+              <p className="mt-2 text-sm text-muted-foreground" data-testid="no-live-data-message">
+                {result.message}
+              </p>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => runSearch(query, true)} data-testid="retry-search-button">
+                  Try Again
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/admin')} data-testid="go-to-admin-integrations-button">
+                  <KeyRound className="h-3.5 w-3.5" /> Configure API Keys
+                </Button>
               </div>
             </div>
           </motion.div>

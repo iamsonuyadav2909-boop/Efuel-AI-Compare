@@ -1,6 +1,6 @@
 """
-EFUEL Engineering Hub - Backend API Test Suite (Updated for India Market & Single Owner)
-Tests authentication changes, AI search bug fix, and India market features.
+EFUEL Engineering Hub - Backend API Test Suite (Phase A: Strict Live-Search-Only)
+Tests the STRICT live-search-only research pipeline with zero hallucination tolerance.
 """
 import requests
 import sys
@@ -15,6 +15,7 @@ class EFUELAPITester:
         self.tests_passed = 0
         self.tests_failed = 0
         self.failed_tests = []
+        self.critical_issues = []
 
     def log(self, message, level="INFO"):
         """Log test messages"""
@@ -67,9 +68,9 @@ class EFUELAPITester:
             self.log(f"❌ FAILED - {name} - Error: {str(e)}", "FAIL")
             return False, {}
 
-    # ===== AUTH TESTS =====
+    # ===== HEALTH & CONFIG TESTS =====
     def test_health(self):
-        """Test health endpoint"""
+        """Test health endpoint - verify Exa NOT configured, Tavily/Firecrawl/LLM configured"""
         success, response = self.run_test(
             "Health Check",
             "GET",
@@ -77,259 +78,273 @@ class EFUELAPITester:
             200
         )
         if success:
-            self.log(f"   Tavily: {response.get('tavily_configured')}, Firecrawl: {response.get('firecrawl_configured')}, LLM: {response.get('llm_configured')}")
+            exa = response.get('exa_configured', None)
+            tavily = response.get('tavily_configured', None)
+            firecrawl = response.get('firecrawl_configured', None)
+            llm = response.get('llm_configured', None)
+            
+            self.log(f"   Exa: {exa}, Tavily: {tavily}, Firecrawl: {firecrawl}, LLM: {llm}")
+            
+            # Verify expected configuration
+            issues = []
+            if exa is not False:
+                issues.append(f"❌ Exa should be False (not configured), got: {exa}")
+            else:
+                self.log(f"   ✅ Exa correctly NOT configured (will use Tavily fallback)")
+            
+            if tavily is not True:
+                issues.append(f"❌ Tavily should be True (configured), got: {tavily}")
+                self.critical_issues.append("Tavily API not configured")
+            else:
+                self.log(f"   ✅ Tavily configured (fallback search provider)")
+            
+            if firecrawl is not True:
+                issues.append(f"❌ Firecrawl should be True (configured), got: {firecrawl}")
+                self.critical_issues.append("Firecrawl API not configured")
+            else:
+                self.log(f"   ✅ Firecrawl configured (content extraction)")
+            
+            if llm is not True:
+                issues.append(f"❌ LLM should be True (configured), got: {llm}")
+                self.critical_issues.append("LLM API not configured")
+            else:
+                self.log(f"   ✅ LLM configured (AI analysis)")
+            
+            if issues:
+                for issue in issues:
+                    self.log(f"   {issue}", "FAIL")
+            
         return success, response
 
-    def test_login(self, email, password, role_name, should_succeed=True):
+    # ===== AUTH TESTS =====
+    def test_login(self, email, password, role_name):
         """Test login and get token"""
-        expected_status = 200 if should_succeed else 401
         success, response = self.run_test(
-            f"Login as {role_name} ({'should succeed' if should_succeed else 'should FAIL'})",
+            f"Login as {role_name}",
             "POST",
             "/auth/login",
-            expected_status,
+            200,
             data={"email": email, "password": password}
         )
-        if success and should_succeed and 'access_token' in response:
+        if success and 'access_token' in response:
             token = response['access_token']
             user = response.get('user', {})
             self.log(f"   Logged in: {user.get('name')} ({user.get('role')})")
             return token
         return None
 
-    def test_register_endpoint_removed(self):
-        """Test that /register endpoint no longer exists"""
+    # ===== RESEARCH TESTS (STRICT LIVE-SEARCH-ONLY) =====
+    def test_research_real_component(self, token, query="MCB"):
+        """Test research with REAL component - verify live_search mode, tavily provider, source_urls"""
+        self.log(f"Starting AI Research for REAL component '{query}' (30-60 seconds)...")
         success, response = self.run_test(
-            "Register Endpoint Removed (should return 404/405)",
-            "POST",
-            "/auth/register",
-            404,  # Expect 404 Not Found since route is removed
-            data={
-                "name": "Test User",
-                "email": "test@efuel.com",
-                "password": "TestPass123!",
-                "role": "engineer"
-            }
-        )
-        # Also accept 405 Method Not Allowed
-        if not success:
-            # Try again expecting 405
-            success2, _ = self.run_test(
-                "Register Endpoint Removed (checking 405)",
-                "POST",
-                "/auth/register",
-                405,
-                data={
-                    "name": "Test User",
-                    "email": "test@efuel.com",
-                    "password": "TestPass123!",
-                    "role": "engineer"
-                }
-            )
-            return success2
-        return success
-
-    def test_me(self, token, expected_role):
-        """Test get current user"""
-        success, response = self.run_test(
-            f"Get Current User ({expected_role})",
-            "GET",
-            "/auth/me",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   User: {response.get('name')} - Role: {response.get('role')}")
-        return success
-
-    # ===== RESEARCH TESTS (India Market Focus) =====
-    def test_ai_search_india_market(self, token, query="RCCB"):
-        """Test AI search with India market focus - takes 30-45 seconds"""
-        self.log(f"Starting AI Search for '{query}' (NEW component, 30-45 seconds, testing India market + live search)...")
-        success, response = self.run_test(
-            f"AI Search: {query} (India Market)",
+            f"Research: {query} (REAL component)",
             "POST",
             "/research",
             200,
-            data={"query": query, "force_refresh": True},  # Force refresh to bypass any old cache
+            data={"query": query, "force_refresh": True},
             token=token,
-            timeout=60  # Generous timeout for AI processing with live search
+            timeout=70
         )
+        
         if success:
-            category = response.get('category', '')
-            products = response.get('products', [])
             data_source_mode = response.get('data_source_mode', '')
-            sources = response.get('sources', [])
-            confidence = response.get('confidence', 0)
+            no_data = response.get('no_data', None)
+            search_provider_used = response.get('search_provider_used', '')
+            products = response.get('products', [])
+            last_crawl_time = response.get('last_crawl_time', None)
+            message = response.get('message', '')
             
-            self.log(f"   Category: {category}")
-            self.log(f"   Products: {len(products)}")
             self.log(f"   Data Source Mode: {data_source_mode}")
-            self.log(f"   Sources Count: {len(sources)}")
-            self.log(f"   Confidence: {confidence}")
+            self.log(f"   No Data: {no_data}")
+            self.log(f"   Search Provider: {search_provider_used}")
+            self.log(f"   Products Count: {len(products)}")
+            self.log(f"   Last Crawl Time: {last_crawl_time}")
             
-            # Verify India market features
+            # CRITICAL VERIFICATIONS
             issues = []
             
-            # 1. Check data_source_mode is 'live_search' (not 'llm_knowledge')
+            # 1. data_source_mode MUST be 'live_search'
             if data_source_mode != 'live_search':
-                issues.append(f"❌ Data source mode is '{data_source_mode}' (expected 'live_search')")
+                issues.append(f"❌ CRITICAL: data_source_mode is '{data_source_mode}' (expected 'live_search')")
+                self.critical_issues.append(f"Research for '{query}' returned wrong data_source_mode: {data_source_mode}")
             else:
-                self.log(f"   ✅ Data source mode is 'live_search' (live search working)")
+                self.log(f"   ✅ data_source_mode is 'live_search'")
             
-            # 2. Check sources array has actual URLs
-            if len(sources) == 0:
-                issues.append(f"❌ No sources found (expected live source URLs)")
+            # 2. no_data MUST be False
+            if no_data is not False:
+                issues.append(f"❌ CRITICAL: no_data is {no_data} (expected False)")
+                self.critical_issues.append(f"Research for '{query}' returned no_data={no_data}")
             else:
-                self.log(f"   ✅ Found {len(sources)} source URLs")
-                # Show first 3 sources
-                for i, src in enumerate(sources[:3]):
-                    self.log(f"      Source {i+1}: {src.get('title', 'N/A')[:50]}... - {src.get('url', 'N/A')[:60]}")
+                self.log(f"   ✅ no_data is False")
             
-            # 3. Check pricing is in INR (₹)
-            inr_count = 0
-            usd_count = 0
-            for p in products:
-                price_range = p.get('estimated_price_range', '')
-                if '₹' in price_range or 'INR' in price_range.upper():
-                    inr_count += 1
-                if '$' in price_range or 'USD' in price_range.upper():
-                    usd_count += 1
-            
-            if inr_count > 0:
-                self.log(f"   ✅ Found {inr_count}/{len(products)} products with INR pricing")
+            # 3. search_provider_used MUST be 'tavily' (since Exa not configured)
+            if search_provider_used != 'tavily':
+                issues.append(f"❌ search_provider_used is '{search_provider_used}' (expected 'tavily' since Exa not configured)")
             else:
-                issues.append(f"❌ No products with INR (₹) pricing found")
+                self.log(f"   ✅ search_provider_used is 'tavily' (correct fallback)")
             
-            if usd_count > 0:
-                issues.append(f"⚠️  Found {usd_count} products with USD pricing (should be INR only)")
-            
-            # 4. Check for Indian brands
-            indian_brands = ['Havells', 'Polycab', 'RR Kabel', 'L&T', 'Legrand', 'Schneider', 
-                           'Crompton', 'CG Power', 'HPL', 'Indo Asian', 'Anchor', 'Exicom',
-                           'Luminous', 'Waaree', 'Vikram Solar', 'Adani Solar', 'Tata Power',
-                           'UTL Solar', 'ABB', 'Siemens']
-            found_indian_brands = []
-            for p in products:
-                brand = p.get('brand', '')
-                if any(ib.lower() in brand.lower() for ib in indian_brands):
-                    found_indian_brands.append(brand)
-            
-            if len(found_indian_brands) > 0:
-                self.log(f"   ✅ Found Indian/India-available brands: {', '.join(set(found_indian_brands))}")
+            # 4. products array MUST be non-empty
+            if len(products) == 0:
+                issues.append(f"❌ CRITICAL: products array is EMPTY (expected 1-5 products)")
+                self.critical_issues.append(f"Research for '{query}' returned ZERO products")
             else:
-                issues.append(f"⚠️  No recognized Indian brands found in results")
+                self.log(f"   ✅ products array has {len(products)} products")
             
-            # 5. Check confidence is high (indicating live data)
-            if confidence >= 0.85:
-                self.log(f"   ✅ High confidence ({confidence}) indicating live search data")
+            # 5. Each product MUST have non-empty source_urls
+            for i, p in enumerate(products):
+                source_urls = p.get('source_urls', [])
+                if not source_urls or len(source_urls) == 0:
+                    issues.append(f"❌ CRITICAL: Product {i+1} '{p.get('name')}' has EMPTY source_urls (violates grounding requirement)")
+                    self.critical_issues.append(f"Product '{p.get('name')}' has no source_urls")
+                else:
+                    self.log(f"   ✅ Product {i+1} '{p.get('name')}' has {len(source_urls)} source URLs")
+            
+            # 6. last_crawl_time MUST be populated
+            if not last_crawl_time:
+                issues.append(f"❌ last_crawl_time is NULL (expected ISO timestamp)")
             else:
-                issues.append(f"⚠️  Low confidence ({confidence}) - expected ~0.9 for live search")
+                self.log(f"   ✅ last_crawl_time populated: {last_crawl_time}")
             
-            # Print any issues found
+            # 7. message should be EMPTY (only populated for no_data)
+            if message:
+                issues.append(f"⚠️  message field is populated ('{message[:50]}...') but should be empty for successful results")
+            
             if issues:
-                self.log("\n   INDIA MARKET VERIFICATION ISSUES:")
+                self.log("\n   VERIFICATION ISSUES:")
                 for issue in issues:
                     self.log(f"   {issue}")
             
             return response.get('id'), response
+        
         return None, {}
 
-    def test_search_history(self, token):
-        """Test get search history"""
+    def test_research_nonsense_query(self, token):
+        """Test research with NONSENSE query - verify no_data=true, exact message"""
+        nonsense_query = "zzxxqqasdkjqwe12312 fictional nonexistent gadget"
+        self.log(f"Starting AI Research for NONSENSE query '{nonsense_query}' (should return no_data)...")
+        
         success, response = self.run_test(
-            "Get Search History",
-            "GET",
-            "/research/history",
-            200,
-            token=token
-        )
-        if success:
-            self.log(f"   Search history count: {len(response)}")
-        return success
-
-    # ===== COMPARE TESTS (INR verification) =====
-    def test_compare_products_inr(self, token, products_data):
-        """Test product comparison with INR verification"""
-        self.log("Starting Product Comparison (30-45 seconds, checking INR)...")
-        success, response = self.run_test(
-            "Compare Products (INR Check)",
+            f"Research: Nonsense Query (should return no_data)",
             "POST",
-            "/compare",
+            "/research",
             200,
-            data={"products": products_data, "query_category": "RCCB"},
+            data={"query": nonsense_query, "force_refresh": False},
             token=token,
-            timeout=60
+            timeout=70
         )
+        
         if success:
-            self.log(f"   Comparison ID: {response.get('id')}")
-            # Check for INR mentions in comparison
-            comparison_text = str(response)
-            if '₹' in comparison_text or 'INR' in comparison_text.upper():
-                self.log(f"   ✅ INR pricing found in comparison results")
+            data_source_mode = response.get('data_source_mode', '')
+            no_data = response.get('no_data', None)
+            products = response.get('products', [])
+            message = response.get('message', '')
+            
+            self.log(f"   Data Source Mode: {data_source_mode}")
+            self.log(f"   No Data: {no_data}")
+            self.log(f"   Products Count: {len(products)}")
+            self.log(f"   Message: {message[:100]}...")
+            
+            # CRITICAL VERIFICATIONS
+            issues = []
+            
+            # Expected exact message
+            EXPECTED_MESSAGE = "No verified live manufacturer data was found for this product. Please check your search query or configure Exa/Tavily and Firecrawl API keys."
+            
+            # 1. no_data MUST be True
+            if no_data is not True:
+                issues.append(f"❌ CRITICAL: no_data is {no_data} (expected True)")
+                self.critical_issues.append(f"Nonsense query returned no_data={no_data} instead of True")
             else:
-                self.log(f"   ⚠️  No INR pricing found in comparison results")
-        return success
+                self.log(f"   ✅ no_data is True")
+            
+            # 2. data_source_mode MUST be 'no_data'
+            if data_source_mode != 'no_data':
+                issues.append(f"❌ CRITICAL: data_source_mode is '{data_source_mode}' (expected 'no_data')")
+                self.critical_issues.append(f"Nonsense query returned data_source_mode='{data_source_mode}' instead of 'no_data'")
+            else:
+                self.log(f"   ✅ data_source_mode is 'no_data'")
+            
+            # 3. products array MUST be empty
+            if len(products) != 0:
+                issues.append(f"❌ CRITICAL: products array has {len(products)} products (expected 0)")
+                self.critical_issues.append(f"Nonsense query returned {len(products)} products instead of 0")
+            else:
+                self.log(f"   ✅ products array is empty")
+            
+            # 4. message MUST EXACTLY match the expected message
+            if message != EXPECTED_MESSAGE:
+                issues.append(f"❌ CRITICAL: message does NOT match expected exact message")
+                self.log(f"   Expected: '{EXPECTED_MESSAGE}'", "FAIL")
+                self.log(f"   Got:      '{message}'", "FAIL")
+                self.critical_issues.append(f"Nonsense query message mismatch")
+            else:
+                self.log(f"   ✅ message EXACTLY matches expected strict message")
+            
+            if issues:
+                self.log("\n   VERIFICATION ISSUES:")
+                for issue in issues:
+                    self.log(f"   {issue}")
+            
+            return response
+        
+        return {}
 
-    # ===== BOM TESTS (INR verification) =====
-    def test_generate_bom_inr(self, token):
-        """Test BOM generation with INR verification"""
-        self.log("Starting BOM Generation for 30kW EV Charger (30-45 seconds, checking INR)...")
-        success, response = self.run_test(
-            "Generate BOM (30kW EV Charger, INR Check)",
+    def test_cache_behavior(self, token, query="Solar Inverter"):
+        """Test cache behavior - verify no_data results NOT cached"""
+        self.log(f"Testing cache behavior with query '{query}'...")
+        
+        # First request (should be fresh)
+        self.log(f"   First request (fresh)...")
+        success1, response1 = self.run_test(
+            f"Cache Test: First Request ({query})",
             "POST",
-            "/bom/generate",
+            "/research",
             200,
-            data={
-                "project_name": "30kW EV Charger India",
-                "requirement": "30kW EV Charger with MCB, MCCB, SPD, Energy Meter for Indian market"
-            },
+            data={"query": query, "force_refresh": True},
             token=token,
-            timeout=60
+            timeout=70
         )
-        if success:
-            self.log(f"   BOM ID: {response.get('id')}")
-            components = response.get('components', [])
-            self.log(f"   Components: {len(components)}")
+        
+        if not success1:
+            self.log(f"   ❌ First request failed, cannot test cache", "FAIL")
+            return False
+        
+        time.sleep(2)
+        
+        # Second request (should be cached if successful)
+        self.log(f"   Second request (should be cached if first was successful)...")
+        start_time = time.time()
+        success2, response2 = self.run_test(
+            f"Cache Test: Second Request ({query})",
+            "POST",
+            "/research",
+            200,
+            data={"query": query, "force_refresh": False},
+            token=token,
+            timeout=70
+        )
+        elapsed = time.time() - start_time
+        
+        if success2:
+            no_data1 = response1.get('no_data', False)
+            no_data2 = response2.get('no_data', False)
             
-            # Check for INR in component pricing
-            inr_count = 0
-            for comp in components:
-                price = comp.get('estimated_price', '')
-                if '₹' in str(price) or 'INR' in str(price).upper():
-                    inr_count += 1
-            
-            if inr_count > 0:
-                self.log(f"   ✅ Found {inr_count}/{len(components)} components with INR pricing")
+            if not no_data1:
+                # Successful result - should be cached (fast response)
+                if elapsed < 5:
+                    self.log(f"   ✅ Cache HIT detected (response in {elapsed:.2f}s)")
+                else:
+                    self.log(f"   ⚠️  Cache may have MISSED (response took {elapsed:.2f}s)")
             else:
-                self.log(f"   ⚠️  No INR pricing found in BOM components")
-            
-            return response.get('id')
-        return None
+                # no_data result - should NOT be cached (fresh attempt)
+                self.log(f"   ✅ no_data result correctly NOT cached (fresh attempt made)")
+        
+        return success2
 
     # ===== ADMIN TESTS =====
-    def test_admin_list_users(self, token):
-        """Test admin list users - should show exactly 1 user"""
-        success, response = self.run_test(
-            "Admin: List Users (should be exactly 1)",
-            "GET",
-            "/admin/users",
-            200,
-            token=token
-        )
-        if success:
-            user_count = len(response)
-            self.log(f"   Total users: {user_count}")
-            if user_count == 1:
-                self.log(f"   ✅ Exactly 1 user found (as expected)")
-                user = response[0]
-                self.log(f"   User: {user.get('name')} - {user.get('email')} - Role: {user.get('role')}")
-            else:
-                self.log(f"   ❌ Expected 1 user, found {user_count}")
-        return success
-
     def test_admin_api_keys_status(self, token):
-        """Test admin API keys status"""
+        """Test admin API keys status - verify all providers have required fields"""
         success, response = self.run_test(
             "Admin: API Keys Status",
             "GET",
@@ -337,54 +352,160 @@ class EFUELAPITester:
             200,
             token=token
         )
+        
         if success:
-            tavily = response.get('tavily', {}).get('configured', False)
-            firecrawl = response.get('firecrawl', {}).get('configured', False)
-            llm = response.get('emergent_llm', {}).get('configured', False)
-            self.log(f"   Tavily: {tavily}, Firecrawl: {firecrawl}, LLM: {llm}")
-            if tavily and firecrawl:
-                self.log(f"   ✅ Live search APIs configured (Tavily + Firecrawl)")
+            providers = ['exa', 'tavily', 'firecrawl', 'emergent_llm']
+            required_fields = ['configured', 'enabled', 'source', 'usage_count', 'last_success_at']
+            
+            issues = []
+            for provider in providers:
+                provider_data = response.get(provider, {})
+                self.log(f"   {provider}: configured={provider_data.get('configured')}, enabled={provider_data.get('enabled')}, source={provider_data.get('source')}")
+                
+                for field in required_fields:
+                    if field not in provider_data:
+                        issues.append(f"❌ {provider} missing field '{field}'")
+            
+            if issues:
+                self.log("\n   API KEYS STATUS ISSUES:")
+                for issue in issues:
+                    self.log(f"   {issue}")
             else:
-                self.log(f"   ⚠️  Live search APIs not fully configured")
+                self.log(f"   ✅ All providers have required fields")
+        
         return success
 
-    def test_admin_list_brands(self, token):
-        """Test admin list brands"""
+    def test_dashboard_summary(self, token):
+        """Test dashboard summary - verify api_status includes exa_search key"""
         success, response = self.run_test(
-            "Admin: List Brands",
+            "Dashboard: Summary",
             "GET",
-            "/admin/brands",
+            "/dashboard/summary",
+            200,
+            token=token
+        )
+        
+        if success:
+            api_status = response.get('api_status', {})
+            self.log(f"   API Status keys: {list(api_status.keys())}")
+            
+            required_keys = ['exa_search', 'tavily_search', 'firecrawl_extract', 'ai_analysis']
+            issues = []
+            
+            for key in required_keys:
+                if key not in api_status:
+                    issues.append(f"❌ api_status missing key '{key}'")
+                else:
+                    self.log(f"   {key}: {api_status[key]}")
+            
+            if issues:
+                self.log("\n   DASHBOARD API STATUS ISSUES:")
+                for issue in issues:
+                    self.log(f"   {issue}")
+            else:
+                self.log(f"   ✅ api_status has all required keys including exa_search")
+        
+        return success
+
+    # ===== REGRESSION TESTS =====
+    def test_regression_compare(self, token, products_data):
+        """Regression: Compare API"""
+        success, response = self.run_test(
+            "Regression: Compare API",
+            "POST",
+            "/compare",
+            200,
+            data={"products": products_data, "query_category": "MCB"},
+            token=token,
+            timeout=60
+        )
+        if success:
+            self.log(f"   ✅ Compare API working")
+        return success
+
+    def test_regression_bom(self, token):
+        """Regression: BOM Generate API"""
+        success, response = self.run_test(
+            "Regression: BOM Generate API",
+            "POST",
+            "/bom/generate",
+            200,
+            data={
+                "project_name": "Test EV Charger",
+                "requirement": "10kW EV Charger with MCB and MCCB"
+            },
+            token=token,
+            timeout=60
+        )
+        if success:
+            self.log(f"   ✅ BOM Generate API working")
+        return success
+
+    def test_regression_chat(self, token):
+        """Regression: Chat API"""
+        success, response = self.run_test(
+            "Regression: Chat API",
+            "POST",
+            "/chat",
+            200,
+            data={"message": "What is an MCB?"},
+            token=token,
+            timeout=30
+        )
+        if success:
+            self.log(f"   ✅ Chat API working")
+        return success
+
+    def test_regression_favorites(self, token):
+        """Regression: Favorites API"""
+        success, response = self.run_test(
+            "Regression: List Favorites",
+            "GET",
+            "/favorites",
             200,
             token=token
         )
         if success:
-            self.log(f"   Total brands: {len(response)}")
+            self.log(f"   ✅ Favorites API working")
         return success
 
-    def test_admin_list_products(self, token):
-        """Test admin list products"""
+    def test_regression_documents(self, token):
+        """Regression: Documents API"""
         success, response = self.run_test(
-            "Admin: List Products",
+            "Regression: List Documents",
             "GET",
-            "/admin/products",
+            "/documents",
             200,
             token=token
         )
         if success:
-            self.log(f"   Total products: {len(response)}")
+            self.log(f"   ✅ Documents API working")
         return success
 
-    def test_admin_list_documents(self, token):
-        """Test admin list documents"""
+    def test_regression_products(self, token):
+        """Regression: Products API"""
         success, response = self.run_test(
-            "Admin: List Documents",
+            "Regression: List Products",
             "GET",
-            "/admin/documents",
+            "/products",
             200,
             token=token
         )
         if success:
-            self.log(f"   Total documents: {len(response)}")
+            self.log(f"   ✅ Products API working")
+        return success
+
+    def test_regression_brands(self, token):
+        """Regression: Brands API"""
+        success, response = self.run_test(
+            "Regression: List Brands",
+            "GET",
+            "/brands",
+            200,
+            token=token
+        )
+        if success:
+            self.log(f"   ✅ Brands API working")
         return success
 
     def print_summary(self):
@@ -396,6 +517,11 @@ class EFUELAPITester:
         print(f"Tests Passed: {self.tests_passed} ✅")
         print(f"Tests Failed: {self.tests_failed} ❌")
         print(f"Success Rate: {(self.tests_passed/self.tests_run*100):.1f}%")
+        
+        if self.critical_issues:
+            print("\n🚨 CRITICAL ISSUES:")
+            for issue in self.critical_issues:
+                print(f"  🚨 {issue}")
         
         if self.failed_tests:
             print("\nFailed Tests:")
@@ -409,84 +535,73 @@ class EFUELAPITester:
 def main():
     print("="*70)
     print("EFUEL Engineering Hub - Backend API Test Suite")
-    print("Testing: Auth Changes, AI Search Bug Fix, India Market Features")
+    print("Phase A: STRICT Live-Search-Only Research Engine")
     print("="*70)
     
     tester = EFUELAPITester()
     
-    # NEW credential (should work)
+    # Credentials from review_request
     owner_email = "owner@efuelhub.com"
     owner_password = "EfuelOwner@2026!"
     
-    # OLD credentials (should all FAIL)
-    old_admin_email = "admin@efuel.com"
-    old_admin_password = "Admin@123"
-    old_engineer_email = "engineer@efuel.com"
-    old_engineer_password = "Engineer@123"
-    old_viewer_email = "viewer@efuel.com"
-    old_viewer_password = "Viewer@123"
-    
-    print("\n📋 PHASE 1: HEALTH CHECK")
+    print("\n📋 PHASE 1: HEALTH & CONFIGURATION CHECK")
     print("-" * 70)
     
-    # Health check
     health_success, health_data = tester.test_health()
     
-    print("\n📋 PHASE 2: AUTH TESTS (NEW vs OLD credentials)")
+    print("\n📋 PHASE 2: AUTHENTICATION")
     print("-" * 70)
     
-    # Test NEW credential (should succeed)
-    tester.owner_token = tester.test_login(owner_email, owner_password, "Owner (NEW)", should_succeed=True)
+    tester.owner_token = tester.test_login(owner_email, owner_password, "Owner")
     
     if not tester.owner_token:
-        print("\n❌ CRITICAL: NEW owner login failed. Cannot proceed with further tests.")
+        print("\n❌ CRITICAL: Login failed. Cannot proceed with further tests.")
         return tester.print_summary()
     
-    # Test OLD credentials (should all FAIL)
-    tester.test_login(old_admin_email, old_admin_password, "Admin (OLD)", should_succeed=False)
-    tester.test_login(old_engineer_email, old_engineer_password, "Engineer (OLD)", should_succeed=False)
-    tester.test_login(old_viewer_email, old_viewer_password, "Viewer (OLD)", should_succeed=False)
-    
-    # Test /me endpoint
-    tester.test_me(tester.owner_token, "admin")
-    
-    # Test that /register endpoint is removed
-    tester.test_register_endpoint_removed()
-    
-    print("\n📋 PHASE 3: AI SEARCH - INDIA MARKET & LIVE SEARCH BUG FIX")
+    print("\n📋 PHASE 3: RESEARCH ENGINE - REAL COMPONENT QUERIES")
     print("-" * 70)
     
-    # AI Search for NEW component (RCCB) - verify live search, INR, Indian brands
-    research_id, research_data = tester.test_ai_search_india_market(tester.owner_token, "RCCB")
+    # Test with multiple real components
+    research_id1, research_data1 = tester.test_research_real_component(tester.owner_token, "MCB")
+    time.sleep(2)
+    research_id2, research_data2 = tester.test_research_real_component(tester.owner_token, "Solar Inverter")
+    time.sleep(2)
+    research_id3, research_data3 = tester.test_research_real_component(tester.owner_token, "EV Connector")
     
-    # Get search history
-    tester.test_search_history(tester.owner_token)
-    
-    print("\n📋 PHASE 4: COMPARE ENGINE (INR verification)")
+    print("\n📋 PHASE 4: RESEARCH ENGINE - NONSENSE QUERY (NO DATA)")
     print("-" * 70)
     
-    # If we got products from research, use them for comparison
-    if research_data and research_data.get('products'):
-        products = research_data.get('products', [])[:2]
+    tester.test_research_nonsense_query(tester.owner_token)
+    
+    print("\n📋 PHASE 5: CACHE BEHAVIOR")
+    print("-" * 70)
+    
+    tester.test_cache_behavior(tester.owner_token, "MCCB")
+    
+    print("\n📋 PHASE 6: ADMIN PANEL - API KEYS & DASHBOARD")
+    print("-" * 70)
+    
+    tester.test_admin_api_keys_status(tester.owner_token)
+    tester.test_dashboard_summary(tester.owner_token)
+    
+    print("\n📋 PHASE 7: REGRESSION TESTS")
+    print("-" * 70)
+    
+    # Use products from first research for compare test
+    if research_data1 and research_data1.get('products'):
+        products = research_data1.get('products', [])[:2]
         compare_products = [
-            {"name": p.get('name'), "brand": p.get('brand'), "category": research_data.get('category')}
+            {"name": p.get('name'), "brand": p.get('brand'), "category": research_data1.get('category')}
             for p in products
         ]
-        tester.test_compare_products_inr(tester.owner_token, compare_products)
+        tester.test_regression_compare(tester.owner_token, compare_products)
     
-    print("\n📋 PHASE 5: BOM BUILDER (INR verification)")
-    print("-" * 70)
-    
-    bom_id = tester.test_generate_bom_inr(tester.owner_token)
-    
-    print("\n📋 PHASE 6: ADMIN PANEL TESTS")
-    print("-" * 70)
-    
-    tester.test_admin_list_users(tester.owner_token)
-    tester.test_admin_api_keys_status(tester.owner_token)
-    tester.test_admin_list_brands(tester.owner_token)
-    tester.test_admin_list_products(tester.owner_token)
-    tester.test_admin_list_documents(tester.owner_token)
+    tester.test_regression_bom(tester.owner_token)
+    tester.test_regression_chat(tester.owner_token)
+    tester.test_regression_favorites(tester.owner_token)
+    tester.test_regression_documents(tester.owner_token)
+    tester.test_regression_products(tester.owner_token)
+    tester.test_regression_brands(tester.owner_token)
     
     return tester.print_summary()
 

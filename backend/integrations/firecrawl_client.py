@@ -1,11 +1,12 @@
 """
 Firecrawl API integration - extracts structured technical content from manufacturer pages.
-Gracefully disabled (returns empty) when FIRECRAWL_API_KEY is not configured.
+Gracefully disabled (returns empty) when FIRECRAWL_API_KEY is not resolvable.
 """
 import asyncio
 import logging
 from typing import List, Dict
-from config import settings
+
+from services import credential_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +31,23 @@ async def extract_pages(urls: List[str], max_pages: int = 3) -> Dict:
     """
     Scrape a list of URLs (already prioritized by trust) and return cleaned markdown content.
     """
-    if not settings.firecrawl_enabled:
-        logger.info('Firecrawl extraction skipped: FIRECRAWL_API_KEY not configured (fallback mode)')
+    api_key = await credential_service.get_api_key('firecrawl')
+    if not api_key:
+        logger.info('Firecrawl extraction skipped: FIRECRAWL_API_KEY not configured')
         return {'enabled': False, 'pages': []}
 
     try:
         from firecrawl import AsyncFirecrawl
-        client = AsyncFirecrawl(api_key=settings.FIRECRAWL_API_KEY)
+        client = AsyncFirecrawl(api_key=api_key)
 
         targets = urls[:max_pages]
         tasks = [_scrape_one(client, u) for u in targets]
         results = await asyncio.gather(*tasks, return_exceptions=False)
         pages = [r for r in results if r.get('success')]
+        if pages:
+            await credential_service.record_success('firecrawl')
         return {'enabled': True, 'pages': pages}
     except Exception as e:
         logger.error(f'Firecrawl client init/extraction error: {e}')
+        await credential_service.record_error('firecrawl', str(e))
         return {'enabled': True, 'pages': [], 'error': str(e)}

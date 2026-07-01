@@ -5,7 +5,16 @@ import { SpecTable } from './SpecTable';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { CheckCircle2, XCircle, ExternalLink, Star, GitCompareArrows, Crown } from 'lucide-react';
+import { CheckCircle2, XCircle, ExternalLink, Star, GitCompareArrows, Crown, ShieldCheck, Clock, Globe } from 'lucide-react';
+
+function formatCrawlTime(iso) {
+  if (!iso) return null;
+  try {
+    return new Date(iso).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+  } catch {
+    return iso;
+  }
+}
 
 export function ProductRankedRow({ product, active, onClick, testId }) {
   return (
@@ -30,9 +39,12 @@ export function ProductRankedRow({ product, active, onClick, testId }) {
   );
 }
 
-export function ProductDetailPanel({ product, onFavorite, onAddCompare, isFavorite, inCompare, compareFull }) {
+export function ProductDetailPanel({ product, onFavorite, onAddCompare, isFavorite, inCompare, compareFull, resultSources = [], lastCrawlTime }) {
   const [tab, setTab] = useState('overview');
   if (!product) return null;
+
+  const sourceMeta = (url) => resultSources.find((s) => s.url === url);
+  const crawlTimeLabel = formatCrawlTime(lastCrawlTime);
 
   return (
     <div className="rounded-xl border bg-card p-5" data-testid="product-detail-panel">
@@ -41,6 +53,11 @@ export function ProductDetailPanel({ product, onFavorite, onAddCompare, isFavori
           <div className="flex items-center gap-2">
             <h3 className="font-display text-lg font-semibold">{product.name}</h3>
             <Badge variant="secondary">{product.brand}</Badge>
+            {product.source_urls?.length > 0 && (
+              <Badge variant="outline" className="gap-1 border-success/30 bg-success/10 text-success" data-testid="live-verified-badge">
+                <ShieldCheck className="h-3 w-3" /> Live Verified
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{product.ai_recommendation}</p>
           {product.estimated_price_range && (
@@ -154,21 +171,40 @@ export function ProductDetailPanel({ product, onFavorite, onAddCompare, isFavori
           )}
         </TabsContent>
 
-        <TabsContent value="sources" className="mt-4">
+        <TabsContent value="sources" className="mt-4 space-y-4">
           {product.source_urls?.length > 0 ? (
-            <ul className="space-y-2">
-              {product.source_urls.map((url, i) => (
-                <li key={i}>
-                  <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-primary hover:underline">
-                    <ExternalLink className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{url}</span>
-                  </a>
-                </li>
-              ))}
-            </ul>
+            <>
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-success/20 bg-success/5 p-3 text-xs">
+                <span className="flex items-center gap-1.5 font-semibold text-success">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Live Verified
+                </span>
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <Globe className="h-3.5 w-3.5" /> Manufacturer: <span className="font-medium text-foreground">{product.brand}</span>
+                </span>
+                {crawlTimeLabel && (
+                  <span className="flex items-center gap-1.5 text-muted-foreground">
+                    <Clock className="h-3.5 w-3.5" /> Last crawled: <span className="font-medium text-foreground">{crawlTimeLabel}</span>
+                  </span>
+                )}
+              </div>
+              <ul className="space-y-2.5" data-testid="product-source-list">
+                {product.source_urls.map((url, i) => {
+                  const meta = sourceMeta(url);
+                  return (
+                    <li key={i} className="rounded-lg border p-2.5">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm font-medium text-primary hover:underline">
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" /> <span className="truncate">{meta?.title || url}</span>
+                      </a>
+                      <p className="mt-1 truncate pl-5.5 font-mono text-xs text-muted-foreground">{meta?.domain || url}</p>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">
-              No live source citations available for this result \u2014 generated from AI expert engineering knowledge.
-              Configure Tavily &amp; Firecrawl API keys in Admin to enable live manufacturer source citations.
+              No specific source URL was cited for this product, but it was extracted from aggregated
+              live search data (never AI-only knowledge).
             </p>
           )}
         </TabsContent>
