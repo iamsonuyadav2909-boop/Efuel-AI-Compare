@@ -12,15 +12,11 @@
     "status": "completed"
   },
   {
-    "content": "Backend: Document Management System (upload/replace/delete/metadata/bulk/versions/enable-disable) + Emergent Object Storage",
+    "content": "Backend: Document Management System + Emergent Object Storage",
     "status": "completed"
   },
   {
-    "content": "Backend: API Integrations manager (update key/toggle/test-connection)",
-    "status": "completed"
-  },
-  {
-    "content": "Backend: Search Logs (clear rights) + AI Logs + System Settings (pluggable LLM provider)",
+    "content": "Backend: API Integrations manager + Search/AI Logs + System Settings",
     "status": "completed"
   },
   {
@@ -28,19 +24,11 @@
     "status": "completed"
   },
   {
-    "content": "Frontend: Documents.js support for uploaded file URLs",
+    "content": "Call testing_agent_v3 for Phase B validation",
     "status": "completed"
   },
   {
-    "content": "Lint + restart + smoke test + screenshots",
+    "content": "Fix sidebar Admin link (super_admin role) + Documents.js null-safety",
     "status": "completed"
-  },
-  {
-    "content": "Call testing_agent_v3 for full Phase B regression + new feature validation",
-    "status": "in_progress"
-  },
-  {
-    "content": "Fix any bugs from testing agent report",
-    "status": "pending"
   }
 ]

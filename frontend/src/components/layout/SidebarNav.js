@@ -78,7 +78,7 @@ export function SidebarNav({ collapsed, onToggle, onNavigate }) {
           </div>
         ))}
 
-        {user?.role === 'admin' && (
+        {(user?.role === 'admin' || user?.role === 'super_admin') && (
           <div>
             {!collapsed && (
               <p className="mb-1.5 px-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Admin</p>
