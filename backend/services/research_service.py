@@ -14,11 +14,12 @@ those keys are configured - no code changes required.
 import hashlib
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
 from config import settings
-from database import ai_cache_collection, api_logs_collection
+from database import ai_cache_collection, api_logs_collection, products_collection, brands_collection
 from models_research import ResearchResult, ProductResult, ScoreBreakdown, SourceRef
 from integrations.tavily_client import search_trusted_sources
 from integrations.firecrawl_client import extract_pages
@@ -159,6 +160,81 @@ Return ONLY a valid raw JSON object with EXACTLY this structure (no markdown, no
     return prompt, data_source_mode
 
 
+async def _persist_products_and_docs(result: ResearchResult):
+    """Persist researched products/brands/documents into their own collections so the
+    Component Library, Admin Panel and Document Library reflect REAL research data
+    (never mocked). Idempotent upserts keyed by (name, brand) / url."""
+    from database import documents_collection
+
+    for p in result.products:
+        try:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            await products_collection.update_one(
+                {'name': p.name, 'brand': p.brand},
+                {
+                    '$set': {
+                        'name': p.name,
+                        'brand': p.brand,
+                        'category': result.category,
+                        'engineering_score': p.engineering_score,
+                        'score_breakdown': p.score_breakdown.model_dump(),
+                        'specifications': [s.model_dump() for s in p.specifications],
+                        'pros': p.pros,
+                        'cons': p.cons,
+                        'engineering_notes': p.engineering_notes,
+                        'compatibility': p.compatibility,
+                        'industrial_applications': p.industrial_applications,
+                        'alternatives': p.alternatives,
+                        'certifications': p.certifications,
+                        'source_urls': p.source_urls,
+                        'ai_recommendation': p.ai_recommendation,
+                        'estimated_price_range': p.estimated_price_range,
+                        'updated_at': now_iso,
+                    },
+                    '$setOnInsert': {'id': str(uuid.uuid4()), 'created_at': now_iso},
+                },
+                upsert=True,
+            )
+            await brands_collection.update_one(
+                {'name': p.brand},
+                {'$setOnInsert': {'name': p.brand, 'created_at': now_iso}},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning(f'Could not persist product {p.name}: {e}')
+
+    for src in result.sources:
+        url_l = (src.url or '').lower()
+        if any(k in url_l for k in ['.pdf', 'datasheet', 'catalogue', 'catalog', 'manual']):
+            doc_type = (
+                'datasheet' if 'datasheet' in url_l or url_l.endswith('.pdf')
+                else 'catalogue' if 'catalog' in url_l
+                else 'manual' if 'manual' in url_l
+                else 'reference'
+            )
+            try:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                await documents_collection.update_one(
+                    {'url': src.url},
+                    {
+                        '$setOnInsert': {
+                            'id': str(uuid.uuid4()),
+                            'title': src.title or result.category,
+                            'url': src.url,
+                            'doc_type': doc_type,
+                            'category': result.category,
+                            'brand': '',
+                            'product_name': '',
+                            'source': 'auto',
+                            'created_at': now_iso,
+                        }
+                    },
+                    upsert=True,
+                )
+            except Exception as e:
+                logger.warning(f'Could not persist document {src.url}: {e}')
+
+
 async def run_research(query: str, force_refresh: bool = False) -> ResearchResult:
     """Main entrypoint for the AI Research Engine core workflow."""
     query = query.strip()
@@ -255,5 +331,7 @@ async def run_research(query: str, force_refresh: bool = False) -> ResearchResul
         {'$set': doc},
         upsert=True,
     )
+
+    await _persist_products_and_docs(result)
 
     return result

@@ -1,54 +1,82 @@
-import { useEffect } from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "sonner";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { ThemeProvider, useTheme } from "@/context/ThemeContext";
+import { ProtectedRoute } from "@/components/layout/ProtectedRoute";
+import { AppShell } from "@/components/layout/AppShell";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+import Login from "@/pages/Login";
+import Register from "@/pages/Register";
+import Dashboard from "@/pages/Dashboard";
+import AISearch from "@/pages/AISearch";
+import Compare from "@/pages/Compare";
+import ComponentLibrary from "@/pages/ComponentLibrary";
+import ComponentCategory from "@/pages/ComponentCategory";
+import ProductDetail from "@/pages/ProductDetail";
+import Documents from "@/pages/Documents";
+import BOMBuilder from "@/pages/BOMBuilder";
+import AIAssistant from "@/pages/AIAssistant";
+import Favorites from "@/pages/Favorites";
+import RecentSearches from "@/pages/RecentSearches";
+import Settings from "@/pages/Settings";
+import Admin from "@/pages/Admin";
+import NotFound from "@/pages/NotFound";
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+function RootRedirect() {
+  const { isAuthenticated, loading } = useAuth();
+  if (loading) return null;
+  return <Navigate to={isAuthenticated ? "/dashboard" : "/login"} replace />;
+}
 
+function ThemedToaster() {
+  const { theme } = useTheme();
+  return <Toaster theme={theme} position="top-right" richColors closeButton />;
+}
+
+function AppRoutes() {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
+    <Routes>
+      <Route path="/" element={<RootRedirect />} />
+      <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
+
+      <Route element={<ProtectedRoute><AppShell /></ProtectedRoute>}>
+        <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/search" element={<AISearch />} />
+        <Route path="/compare" element={<Compare />} />
+        <Route path="/library" element={<ComponentLibrary />} />
+        <Route path="/library/:categoryName" element={<ComponentCategory />} />
+        <Route path="/product/:productId" element={<ProductDetail />} />
+        <Route path="/documents" element={<Documents />} />
+        <Route path="/bom-builder" element={<BOMBuilder />} />
+        <Route path="/assistant" element={<AIAssistant />} />
+        <Route path="/favorites" element={<Favorites />} />
+        <Route path="/recent-searches" element={<RecentSearches />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route
+          path="/admin"
+          element={<ProtectedRoute roles={["admin"]}><Admin /></ProtectedRoute>}
+        />
+      </Route>
+
+      <Route path="*" element={<NotFound />} />
+    </Routes>
   );
-};
+}
 
 function App() {
   return (
     <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <AppRoutes />
+            <ThemedToaster />
+          </AuthProvider>
+        </BrowserRouter>
+      </ThemeProvider>
     </div>
   );
 }

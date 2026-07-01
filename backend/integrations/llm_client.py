@@ -92,4 +92,4 @@ async def generate_chat_reply(system_message: str, session_id: str, message: str
         return response_text
     except Exception as e:
         logger.error(f'LLM chat error: {e}')
-        return f"I'm sorry, I encountered an error while processing your request. Please try again shortly."
+        return "I'm sorry, I encountered an error while processing your request. Please try again shortly."
